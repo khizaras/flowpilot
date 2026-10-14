@@ -1,0 +1,23 @@
+
+
+{
+  "promptSuggestionEnabled": true,
+  "env": {
+    "CLAUDE_CODE_ENABLE_TELEMETRY": "0",
+    "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+    "CLAUDE_CODE_ATTRIBUTION_HEADER" : "0",
+    "ANTHROPIC_BASE_URL":"http://localhost:8888/",
+     "ANTHROPIC_AUTH_TOKEN":"sk-unsloth-77875c58fd3fd1fc5693b068bbd95611"
+  },
+  "permissions": {
+    "defaultMode": "bypassPermissions"
+  },
+  "attribution": {
+    "commit": "",
+    "pr": ""
+  },
+  "plansDirectory" : "./plans",
+  "prefersReducedMotion" : true,
+  "terminalProgressBarEnabled" : false,
+  "effortLevel" : "high"
+}
