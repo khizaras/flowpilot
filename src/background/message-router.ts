@@ -150,6 +150,10 @@ export class MessageRouter {
       return { success: false, error: 'Workflow not found' };
     }
 
+    if (!Array.isArray(workflow.steps) || workflow.steps.length === 0) {
+      return { success: false, error: 'This workflow has no recorded steps' };
+    }
+
     const tabId = await this.resolveTargetTab(sender);
     if (tabId === undefined) {
       return { success: false, error: 'No active tab found' };
@@ -166,11 +170,23 @@ export class MessageRouter {
 
     try {
       await this.ensureContentScript(tabId);
-      await chrome.tabs.sendMessage(tabId, { type: 'EXECUTE_WORKFLOW', workflow });
+      const response = (await chrome.tabs.sendMessage(tabId, {
+        type: 'EXECUTE_WORKFLOW',
+        workflow
+      })) as { success?: boolean; error?: string };
+
+      if (response?.success === false) {
+        run.status = 'failed';
+        run.endTime = Date.now();
+        await this.executions.saveExecutionRun(run);
+        return { success: false, error: response.error ?? 'Workflow execution failed' };
+      }
+
       run.status = 'success';
     } catch (error) {
       run.status = 'failed';
-      void this.executions.saveExecutionRun(run);
+      run.endTime = Date.now();
+      await this.executions.saveExecutionRun(run);
       return { success: false, error: describeError(error) };
     }
 

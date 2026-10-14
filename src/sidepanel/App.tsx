@@ -43,6 +43,7 @@ const App: React.FC = () => {
   const [isLoading, setIsLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<'workflows' | 'history'>('workflows');
   const [error, setError] = useState<string | null>(null);
+  const [runningWorkflowId, setRunningWorkflowId] = useState<string | null>(null);
 
   const loadWorkflows = useCallback(async () => {
     const response = await sendMessage<{ success: boolean; workflows: Workflow[] }>({
@@ -118,15 +119,20 @@ const App: React.FC = () => {
 
   const handleExecuteWorkflow = useCallback(async (workflowId: string) => {
     setError(null);
-    const response = await sendMessage<{ success: boolean; error?: string }>({
-      type: 'EXECUTE_WORKFLOW',
-      workflowId
-    });
-    if (response?.success) {
-      await Promise.all([loadWorkflows(), loadExecutionRuns()]);
-      setActiveTab('history');
-    } else {
-      setError(response?.error ?? 'Failed to execute workflow');
+    setRunningWorkflowId(workflowId);
+    try {
+      const response = await sendMessage<{ success: boolean; error?: string }>({
+        type: 'EXECUTE_WORKFLOW',
+        workflowId
+      });
+      if (response?.success) {
+        await Promise.all([loadWorkflows(), loadExecutionRuns()]);
+        setActiveTab('history');
+      } else {
+        setError(response?.error ?? 'Failed to execute workflow');
+      }
+    } finally {
+      setRunningWorkflowId(null);
     }
   }, [loadWorkflows, loadExecutionRuns]);
 
@@ -218,9 +224,10 @@ const App: React.FC = () => {
                     <div className="workflow-actions">
                       <button
                         className="button button-secondary"
+                        disabled={runningWorkflowId === workflow.id}
                         onClick={() => void handleExecuteWorkflow(workflow.id)}
                       >
-                        Run
+                        {runningWorkflowId === workflow.id ? 'Running…' : 'Run'}
                       </button>
                       <button
                         className="button button-destructive"

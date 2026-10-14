@@ -4,6 +4,7 @@
  */
 
 import { WorkflowStep, TargetDefinition, Selector, ElementFingerprint } from '../shared/types';
+import { showRecordingBadge, hideOverlay } from './overlay';
 
 const RECORDING_STORAGE_KEY = 'flowpilot_recording';
 const INPUT_DEBOUNCE_MS = 500;
@@ -36,69 +37,6 @@ function writeStoredRecording(recording: StoredRecording): void {
   void chrome.storage.local.set({ [RECORDING_STORAGE_KEY]: recording });
 }
 
-const OVERLAY_ID = 'flowpilot-recording-overlay';
-
-function ensureOverlay(): HTMLElement | null {
-  if (typeof document === 'undefined') {
-    return null;
-  }
-  let overlay = document.getElementById(OVERLAY_ID);
-  if (!overlay) {
-    overlay = document.createElement('div');
-    overlay.id = OVERLAY_ID;
-    overlay.style.cssText = [
-      'position: fixed',
-      'top: 12px',
-      'left: 50%',
-      'transform: translateX(-50%)',
-      'z-index: 2147483647',
-      'display: none',
-      'align-items: center',
-      'gap: 8px',
-      'padding: 6px 12px',
-      'border-radius: 999px',
-      'background: rgba(17, 24, 39, 0.9)',
-      'color: #ffffff',
-      'font: 500 12px/1 system-ui, sans-serif',
-      'box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25)',
-      'pointer-events: none'
-    ].join(';');
-    document.documentElement.appendChild(overlay);
-  }
-  return overlay;
-}
-
-function setOverlayVisible(visible: boolean, stepCount: number): void {
-  const overlay = ensureOverlay();
-  if (!overlay) {
-    return;
-  }
-  if (visible) {
-    ensureOverlayKeyframes();
-    overlay.innerHTML = '';
-    const dot = document.createElement('span');
-    dot.style.cssText = 'width:8px;height:8px;border-radius:50%;background:#EF4444;animation:flowpilot-pulse 1s ease-in-out infinite;display:inline-block;';
-    const label = document.createElement('span');
-    label.textContent = `Recording · ${stepCount} step${stepCount === 1 ? '' : 's'}`;
-    overlay.append(dot, label);
-    overlay.style.display = 'flex';
-  } else {
-    overlay.style.display = 'none';
-  }
-}
-
-// We re-create the overlay with the dot each update, so the keyframe style
-// needs to live in a stylesheet rather than inline on the overlay itself
-function ensureOverlayKeyframes(): void {
-  if (typeof document === 'undefined' || document.getElementById(`${OVERLAY_ID}-style`)) {
-    return;
-  }
-  const style = document.createElement('style');
-  style.id = `${OVERLAY_ID}-style`;
-  style.textContent = '@keyframes flowpilot-pulse { 0%,100% { opacity: 1 } 50% { opacity: .35 } }';
-  document.documentElement.appendChild(style);
-}
-
 export class Recorder {
   private isRecording = false;
   private steps: WorkflowStep[] = [];
@@ -114,7 +52,7 @@ export class Recorder {
     }
     this.isRecording = true;
     this.steps = stored.steps;
-    setOverlayVisible(true, this.steps.length);
+    showRecordingBadge(this.steps.length);
   }
 
   /**
@@ -125,7 +63,7 @@ export class Recorder {
     this.steps = [];
     this.flushPendingInputs();
     writeStoredRecording({ active: true, steps: [] });
-    setOverlayVisible(true, 0);
+    showRecordingBadge(0);
   }
 
   /**
@@ -138,7 +76,7 @@ export class Recorder {
     const steps = this.steps;
     this.steps = [];
     writeStoredRecording({ active: false, steps: [] });
-    setOverlayVisible(false, 0);
+    hideOverlay();
     return steps;
   }
 
@@ -238,7 +176,7 @@ export class Recorder {
   private commitStep(step: WorkflowStep): void {
     this.steps.push(step);
     writeStoredRecording({ active: true, steps: this.steps });
-    setOverlayVisible(true, this.steps.length);
+    showRecordingBadge(this.steps.length);
   }
 
   private flushPendingInputs(): void {

@@ -27,7 +27,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     case 'EXECUTE_WORKFLOW':
       if (msg.workflow) {
         executor.executeWorkflow(msg.workflow)
-          .then(result => sendResponse({ success: result }))
+          .then(result => sendResponse({ success: result, error: result ? undefined : (executor.getLastError() ?? 'Workflow execution failed') }))
           .catch((error: unknown) => sendResponse({ success: false, error: error instanceof Error ? error.message : String(error) }));
         return true; // Keep message channel open for async response
       }

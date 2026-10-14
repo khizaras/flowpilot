@@ -1,4 +1,5 @@
 import { WorkflowStep, TargetDefinition } from '../shared/types';
+import { showExecutionBadge, showExecutionResult, flashTarget } from './overlay';
 
 /**
  * Execution Engine for FlowPilot
@@ -6,19 +7,26 @@ import { WorkflowStep, TargetDefinition } from '../shared/types';
  */
 export class Executor {
   private isExecuting = false;
+  private lastError: string | null = null;
+
+  getLastError(): string | null {
+    return this.lastError;
+  }
 
   /**
    * Execute a workflow
    * @param workflow - The workflow to execute
-   * @returns Promise that resolves when execution completes
+   * @returns Promise that resolves with the execution result
    */
   async executeWorkflow(workflow: any): Promise<boolean> {
     if (this.isExecuting) {
+      this.lastError = 'Another workflow is already running';
       console.warn('Execution already in progress');
       return false;
     }
 
     this.isExecuting = true;
+    this.lastError = null;
     console.log('Starting workflow execution:', workflow.name || 'Unnamed Workflow');
 
     try {
@@ -27,17 +35,22 @@ export class Executor {
         throw new Error('Invalid workflow structure');
       }
 
+      const steps: WorkflowStep[] = workflow.steps.filter((step: WorkflowStep) => step.enabled !== false);
+      if (steps.length === 0) {
+        throw new Error('Workflow has no enabled steps');
+      }
+
       // Execute each step in sequence
-      for (let i = 0; i < workflow.steps.length; i++) {
-        const step = workflow.steps[i];
-        console.log(`Executing step ${i + 1}:`, step.type);
-
-        // Execute the current step
-        const success = await this.executeStep(step);
-
-        if (!success) {
-          console.error(`Step ${i + 1} failed`);
-          throw new Error(`Step ${i + 1} execution failed`);
+      for (let i = 0; i < steps.length; i++) {
+        showExecutionBadge(i + 1, steps.length);
+        try {
+          const ok = await this.executeStep(steps[i]);
+          if (!ok) {
+            throw new Error('target not found');
+          }
+        } catch (error) {
+          const reason = error instanceof Error ? error.message : String(error);
+          throw new Error(`Step ${i + 1} of ${steps.length} (${steps[i].type}) failed: ${reason}`, { cause: error });
         }
 
         // Add a small delay between steps for better UX
@@ -45,9 +58,12 @@ export class Executor {
       }
 
       console.log('Workflow execution completed successfully');
+      showExecutionResult(true);
       return true;
     } catch (error) {
+      this.lastError = error instanceof Error ? error.message : String(error);
       console.error('Workflow execution failed:', error);
+      showExecutionResult(false, this.lastError);
       return false;
     } finally {
       this.isExecuting = false;
@@ -60,25 +76,19 @@ export class Executor {
    * @returns Promise that resolves with execution result
    */
   private async executeStep(step: WorkflowStep): Promise<boolean> {
-    try {
-      switch (step.type) {
-        case 'click':
-          return await this.executeClick(step);
-        case 'type':
-          return await this.executeType(step);
-        case 'wait':
-          return await this.executeWait(step);
-        case 'navigate':
-          return await this.executeNavigate(step);
-        case 'scroll':
-          return await this.executeScroll(step);
-        default:
-          console.warn('Unsupported step type:', step.type);
-          return false;
-      }
-    } catch (error) {
-      console.error('Error executing step:', error);
-      return false;
+    switch (step.type) {
+      case 'click':
+        return await this.executeClick(step);
+      case 'type':
+        return await this.executeType(step);
+      case 'wait':
+        return await this.executeWait(step);
+      case 'navigate':
+        return await this.executeNavigate(step);
+      case 'scroll':
+        return await this.executeScroll(step);
+      default:
+        throw new Error(`unsupported step type`);
     }
   }
 
@@ -93,6 +103,7 @@ export class Executor {
     const element = this.resolveTarget(step.target);
     if (!element) return false;
 
+    flashTarget(element);
     element.scrollIntoView({ block: 'center' });
     element.click();
     return true;
@@ -110,6 +121,8 @@ export class Executor {
     if (!(element instanceof HTMLInputElement) && !(element instanceof HTMLTextAreaElement)) {
       return false;
     }
+
+    flashTarget(element);
 
     // Set the value through the native setter so framework state
     // (React, Vue, ...) observes the change, then notify listeners
