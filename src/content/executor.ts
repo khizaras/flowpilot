@@ -1,4 +1,4 @@
-import { WorkflowStep } from '../shared/types';
+import { WorkflowStep, StepResult } from '../shared/types';
 import { showExecutionBadge, showExecutionResult, flashTarget } from './overlay';
 import { resolveTarget, ResolveOptions } from './target-resolver';
 
@@ -11,6 +11,7 @@ const STEP_PAUSE_MS = 120;
 export class Executor {
   private isExecuting = false;
   private lastError: string | null = null;
+  private runSteps: StepResult[] = [];
   private onProgress?: (current: number, total: number) => void;
 
   constructor(onProgress?: (current: number, total: number) => void) {
@@ -19,6 +20,10 @@ export class Executor {
 
   getLastError(): string | null {
     return this.lastError;
+  }
+
+  getStepResults(): StepResult[] {
+    return this.runSteps;
   }
 
   private resolveOptions(timeoutMs = 6000): ResolveOptions {
@@ -39,6 +44,7 @@ export class Executor {
 
     this.isExecuting = true;
     this.lastError = null;
+    this.runSteps = [];
     console.log('Starting workflow execution:', workflow.name || 'Unnamed Workflow');
 
     try {
@@ -61,8 +67,21 @@ export class Executor {
           if (!ok) {
             throw new Error('target not found');
           }
+          this.runSteps.push({
+            stepId: steps[i].id,
+            stepType: steps[i].type,
+            status: 'success',
+            timestamp: Date.now()
+          });
         } catch (error) {
           const reason = error instanceof Error ? error.message : String(error);
+          this.runSteps.push({
+            stepId: steps[i].id,
+            stepType: steps[i].type,
+            status: 'failed',
+            timestamp: Date.now(),
+            error: reason
+          });
           throw new Error(`Step ${i + 1} of ${steps.length} (${steps[i].type}) failed: ${reason}`, { cause: error });
         }
 

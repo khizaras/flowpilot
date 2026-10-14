@@ -75,6 +75,7 @@ export interface ExecutionStep {
   id: string;
   workflowId: string;
   stepId: string;
+  stepType?: StepType;
   status: 'pending' | 'running' | 'success' | 'failed';
   timestamp: number;
   error?: string;
@@ -89,4 +90,15 @@ export interface ExecutionRun {
   endTime?: number;
   steps: ExecutionStep[];
   // Add other properties as needed
+}
+
+/**
+ * Step-level diagnostic reported by the executor during a run
+ */
+export interface StepResult {
+  stepId: string;
+  stepType: StepType;
+  status: 'success' | 'failed';
+  timestamp: number;
+  error?: string;
 }

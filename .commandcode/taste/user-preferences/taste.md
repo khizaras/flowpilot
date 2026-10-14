@@ -7,3 +7,4 @@
 - Prefers multi-part work tracked with a todo list, created up front and kept updated as items complete. Confidence: 0.8
 - Cares about premium, polished UI quality — explicitly chose to "revamp the ui with premium look and feel", framing visual design as a first-class requirement alongside functionality. Confidence: 0.85
 - Reports recurring problems framed as requests for advanced/smart upgrades (e.g. "i want to make it more smart and revamp the ui"), not just minimal bug fixes — respond with ambitious, feature-rich improvements plus the fix. Confidence: 0.75
+- Explicitly asks for detailed failure reporting and granular visibility: wants error surfaces to expose per-item diagnostics (which item failed, with the exact reason) and expandable detail views over the underlying items (e.g. per-step lists with type chips and toggles), rather than opaque aggregate success/failure messages. Confidence: 0.75

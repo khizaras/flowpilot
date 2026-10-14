@@ -1,4 +1,4 @@
-import type { ExecutionRun, Workflow, WorkflowStep } from '../shared/types';
+import type { ExecutionRun, ExecutionStep, Workflow, WorkflowStep, StepResult } from '../shared/types';
 import { WorkflowManager } from '../domain/workflow';
 import { WorkflowRepository } from '../storage/workflow-repository';
 import { ExecutionRepository } from '../storage/execution-repository';
@@ -11,6 +11,21 @@ const EXECUTION_TIMEOUT_MS = 120000;
 
 function describeError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * Turn executor diagnostics into persisted ExecutionStep records
+ */
+function convertStepResults(run: ExecutionRun, results: StepResult[]): ExecutionStep[] {
+  return results.map((result, index) => ({
+    id: `${run.id}_step${index}`,
+    workflowId: run.workflowId,
+    stepId: result.stepId,
+    stepType: result.stepType,
+    status: result.status,
+    timestamp: result.timestamp,
+    error: result.error
+  }));
 }
 
 /**
@@ -37,6 +52,7 @@ export class MessageRouter {
     this.addHandler('LIST_WORKFLOWS', () => this.handleListWorkflows());
     this.addHandler('DELETE_WORKFLOW', (m) => this.handleDeleteWorkflow(m));
     this.addHandler('LIST_RUNS', (m) => this.handleListRuns(m));
+    this.addHandler('GET_RUN', (m) => this.handleGetRun(m));
   }
 
   addHandler(type: string, handler: MessageHandler): void {
@@ -176,7 +192,7 @@ export class MessageRouter {
       const execution = chrome.tabs.sendMessage(tabId, {
         type: 'EXECUTE_WORKFLOW',
         workflow
-      }) as Promise<{ success?: boolean; error?: string }>;
+      }) as Promise<{ success?: boolean; error?: string; steps?: StepResult[] }>;
 
       const response = await Promise.race([
         execution,
@@ -185,11 +201,12 @@ export class MessageRouter {
         })
       ]);
 
+      run.steps = convertStepResults(run, response?.steps ?? []);
       if (response?.success === false) {
         run.status = 'failed';
         run.endTime = Date.now();
         await this.executions.saveExecutionRun(run);
-        return { success: false, error: response.error ?? 'Workflow execution failed' };
+        return { success: false, error: response.error ?? 'Workflow execution failed', runId: run.id };
       }
 
       run.status = 'success';
@@ -197,12 +214,21 @@ export class MessageRouter {
       run.status = 'failed';
       run.endTime = Date.now();
       await this.executions.saveExecutionRun(run);
-      return { success: false, error: describeError(error) };
+      return { success: false, error: describeError(error), runId: run.id };
     }
 
     run.endTime = Date.now();
     await this.executions.saveExecutionRun(run);
     return { success: true, runId: run.id };
+  }
+
+  private async handleGetRun(message: ExtensionMessage): Promise<unknown> {
+    const id = typeof message.id === 'string' ? message.id : undefined;
+    if (!id) {
+      return { success: false, error: 'No run id provided' };
+    }
+    const run = await this.executions.getExecutionRun(id);
+    return { success: true, run };
   }
 
   private async handleSaveWorkflow(message: ExtensionMessage): Promise<unknown> {
