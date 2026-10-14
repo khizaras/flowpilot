@@ -3,7 +3,7 @@
  * Contains execution-related business logic
  */
 
-import { Workflow, WorkflowStep, StepType, TargetDefinition } from '../../shared/types';
+import { Workflow, WorkflowStep, TargetDefinition } from '../../shared/types';
 
 export class ExecutionManager {
   // Execute a workflow step
@@ -57,11 +57,12 @@ export class ExecutionManager {
   // Execute a wait step
   private static async executeWait(step: WorkflowStep): Promise<boolean> {
     if (!step.wait) return false;
+    const wait = step.wait;
 
     // In a real implementation, this would wait for the specified condition
     // For now, just a simple delay
     return new Promise(resolve => {
-      setTimeout(() => resolve(true), step.wait.timeout || 1000);
+      setTimeout(() => resolve(true), wait.timeout || 1000);
     });
   }
 
@@ -75,7 +76,7 @@ export class ExecutionManager {
   }
 
   // Execute a scroll step
-  private static async executeScroll(step: WorkflowStep): Promise<boolean> {
+  private static async executeScroll(_step: WorkflowStep): Promise<boolean> {
     // In a real implementation, this would scroll to the specified position
     // For now, just return true
     return true;
@@ -90,7 +91,7 @@ export class ExecutionManager {
         if (element) {
           return element as HTMLElement;
         }
-      } catch (error) {
+      } catch {
         console.warn('Failed to resolve selector:', selector.value);
       }
     }

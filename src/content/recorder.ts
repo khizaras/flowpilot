@@ -3,12 +3,119 @@
  * Captures user interactions and converts them into workflow steps
  */
 
-import { WorkflowStep, StepType, TargetDefinition, Selector, ElementFingerprint } from '../shared/types';
+import { WorkflowStep, TargetDefinition, Selector, ElementFingerprint } from '../shared/types';
+
+const RECORDING_STORAGE_KEY = 'flowpilot_recording';
+const INPUT_DEBOUNCE_MS = 500;
+
+interface StoredRecording {
+  active: boolean;
+  steps: WorkflowStep[];
+}
+
+function hasChromeStorage(): boolean {
+  return typeof chrome !== 'undefined' && !!chrome.storage?.local;
+}
+
+async function readStoredRecording(): Promise<StoredRecording | null> {
+  if (!hasChromeStorage()) {
+    return null;
+  }
+  const result = await chrome.storage.local.get(RECORDING_STORAGE_KEY);
+  const value = result[RECORDING_STORAGE_KEY] as Partial<StoredRecording> | undefined;
+  if (value?.active === true && Array.isArray(value.steps)) {
+    return { active: true, steps: value.steps };
+  }
+  return null;
+}
+
+function writeStoredRecording(recording: StoredRecording): void {
+  if (!hasChromeStorage()) {
+    return;
+  }
+  void chrome.storage.local.set({ [RECORDING_STORAGE_KEY]: recording });
+}
+
+const OVERLAY_ID = 'flowpilot-recording-overlay';
+
+function ensureOverlay(): HTMLElement | null {
+  if (typeof document === 'undefined') {
+    return null;
+  }
+  let overlay = document.getElementById(OVERLAY_ID);
+  if (!overlay) {
+    overlay = document.createElement('div');
+    overlay.id = OVERLAY_ID;
+    overlay.style.cssText = [
+      'position: fixed',
+      'top: 12px',
+      'left: 50%',
+      'transform: translateX(-50%)',
+      'z-index: 2147483647',
+      'display: none',
+      'align-items: center',
+      'gap: 8px',
+      'padding: 6px 12px',
+      'border-radius: 999px',
+      'background: rgba(17, 24, 39, 0.9)',
+      'color: #ffffff',
+      'font: 500 12px/1 system-ui, sans-serif',
+      'box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25)',
+      'pointer-events: none'
+    ].join(';');
+    document.documentElement.appendChild(overlay);
+  }
+  return overlay;
+}
+
+function setOverlayVisible(visible: boolean, stepCount: number): void {
+  const overlay = ensureOverlay();
+  if (!overlay) {
+    return;
+  }
+  if (visible) {
+    ensureOverlayKeyframes();
+    overlay.innerHTML = '';
+    const dot = document.createElement('span');
+    dot.style.cssText = 'width:8px;height:8px;border-radius:50%;background:#EF4444;animation:flowpilot-pulse 1s ease-in-out infinite;display:inline-block;';
+    const label = document.createElement('span');
+    label.textContent = `Recording · ${stepCount} step${stepCount === 1 ? '' : 's'}`;
+    overlay.append(dot, label);
+    overlay.style.display = 'flex';
+  } else {
+    overlay.style.display = 'none';
+  }
+}
+
+// We re-create the overlay with the dot each update, so the keyframe style
+// needs to live in a stylesheet rather than inline on the overlay itself
+function ensureOverlayKeyframes(): void {
+  if (typeof document === 'undefined' || document.getElementById(`${OVERLAY_ID}-style`)) {
+    return;
+  }
+  const style = document.createElement('style');
+  style.id = `${OVERLAY_ID}-style`;
+  style.textContent = '@keyframes flowpilot-pulse { 0%,100% { opacity: 1 } 50% { opacity: .35 } }';
+  document.documentElement.appendChild(style);
+}
 
 export class Recorder {
-  private isRecording: boolean = false;
+  private isRecording = false;
   private steps: WorkflowStep[] = [];
-  private lastTimestamp: number = 0;
+  private pendingInputs: Map<HTMLElement, { value: string; timer: number }> = new Map();
+
+  /**
+   * Restore an in-progress recording after the page was reloaded or navigated
+   */
+  async init(): Promise<void> {
+    const stored = await readStoredRecording();
+    if (!stored || !stored.active) {
+      return;
+    }
+    this.isRecording = true;
+    this.steps = stored.steps;
+    setOverlayVisible(true, this.steps.length);
+  }
 
   /**
    * Start recording user interactions
@@ -16,18 +123,23 @@ export class Recorder {
   startRecording(): void {
     this.isRecording = true;
     this.steps = [];
-    this.lastTimestamp = Date.now();
-    console.log('Recorder started');
+    this.flushPendingInputs();
+    writeStoredRecording({ active: true, steps: [] });
+    setOverlayVisible(true, 0);
   }
 
   /**
    * Stop recording and return the captured workflow
    * @returns The recorded workflow steps
    */
-  stopRecording(): WorkflowStep[] {
+  async stopRecording(): Promise<WorkflowStep[]> {
     this.isRecording = false;
-    console.log('Recorder stopped. Recorded', this.steps.length, 'steps');
-    return this.steps;
+    this.flushPendingInputs();
+    const steps = this.steps;
+    this.steps = [];
+    writeStoredRecording({ active: false, steps: [] });
+    setOverlayVisible(false, 0);
+    return steps;
   }
 
   /**
@@ -47,6 +159,13 @@ export class Recorder {
   }
 
   /**
+   * Flush any debounced input steps (call before page unload)
+   */
+  flush(): void {
+    this.flushPendingInputs();
+  }
+
+  /**
    * Record a click event
    * @param target - The element that was clicked
    */
@@ -61,33 +180,29 @@ export class Recorder {
       timestamp: Date.now()
     };
 
-    this.steps.push(step);
-    console.log('Recorded click step:', step.id);
+    this.commitStep(step);
   }
 
   /**
-   * Record an input event
+   * Record an input event. Values are debounced per element so only the
+   * final value is captured after the user stops typing.
    * @param target - The input element
    * @param value - The input value
    */
   recordInput(target: HTMLInputElement, value: string): void {
     if (!this.isRecording) return;
 
-    const step: WorkflowStep = {
-      id: this.generateId(),
-      type: 'type',
-      enabled: true,
-      target: this.generateTargetDefinition(target),
-      input: {
-        value,
-        isSensitive: this.isSensitiveField(target),
-        masked: this.isSensitiveField(target)
-      },
-      timestamp: Date.now()
-    };
+    const existing = this.pendingInputs.get(target);
+    if (existing) {
+      window.clearTimeout(existing.timer);
+    }
 
-    this.steps.push(step);
-    console.log('Recorded input step:', step.id);
+    const timer = window.setTimeout(() => {
+      this.pendingInputs.delete(target);
+      this.commitInput(target, value);
+    }, INPUT_DEBOUNCE_MS);
+
+    this.pendingInputs.set(target, { value, timer });
   }
 
   /**
@@ -99,6 +214,41 @@ export class Recorder {
 
     // For now, we'll just record basic key events, but this could be expanded
     console.log('Recorded keydown:', event.key);
+  }
+
+  private commitInput(target: HTMLInputElement, value: string): void {
+    const isSensitive = this.isSensitiveField(target);
+    const step: WorkflowStep = {
+      id: this.generateId(),
+      type: 'type',
+      enabled: true,
+      target: this.generateTargetDefinition(target),
+      input: {
+        // Sensitive values are never stored in plaintext
+        value: isSensitive ? '' : value,
+        isSensitive,
+        masked: isSensitive
+      },
+      timestamp: Date.now()
+    };
+
+    this.commitStep(step);
+  }
+
+  private commitStep(step: WorkflowStep): void {
+    this.steps.push(step);
+    writeStoredRecording({ active: true, steps: this.steps });
+    setOverlayVisible(true, this.steps.length);
+  }
+
+  private flushPendingInputs(): void {
+    for (const [element, pending] of this.pendingInputs) {
+      window.clearTimeout(pending.timer);
+      if (element instanceof HTMLInputElement) {
+        this.commitInput(element, pending.value);
+      }
+    }
+    this.pendingInputs.clear();
   }
 
   /**
@@ -205,7 +355,7 @@ export class Recorder {
     let current = element;
 
     while (current && current.nodeType === Node.ELEMENT_NODE) {
-      let nodeName = current.nodeName.toLowerCase();
+      const nodeName = current.nodeName.toLowerCase();
       if (current.id) {
         path = `/${nodeName}[@id="${current.id}"]${path}`;
         break;

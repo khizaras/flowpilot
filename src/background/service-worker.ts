@@ -1,49 +1,30 @@
 import { MessageRouter } from './message-router';
+import { IndexedDBStorage } from '../storage/indexeddb';
+import { WorkflowRepository } from '../storage/workflow-repository';
+import { ExecutionRepository } from '../storage/execution-repository';
 
-// Create message router instance
-const messageRouter = new MessageRouter();
-
-// Handle extension installation
 chrome.runtime.onInstalled.addListener(() => {
-  console.log('FlowPilot extension installed');
+  chrome.sidePanel
+    .setPanelBehavior({ openPanelOnActionClick: true })
+    .catch((error) => console.error('Failed to configure side panel behavior:', error));
 });
 
-// Handle extension startup
-chrome.runtime.onStartup.addListener(() => {
-  console.log('FlowPilot extension started');
-});
+const routerPromise = createRouter();
 
-// Listen for messages from content scripts and other extension components
+async function createRouter(): Promise<MessageRouter> {
+  const storage = new IndexedDBStorage();
+  await storage.init();
+  return new MessageRouter(
+    new WorkflowRepository(storage),
+    new ExecutionRepository(storage)
+  );
+}
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  // Route messages through our message router
-  messageRouter.handleMessage(message, sender, sendResponse);
-
-  // Keep the message channel open for async responses
+  void routerPromise.then(
+    (router) => router.handleMessage(message, sender, sendResponse),
+    () => sendResponse({ success: false, error: 'Storage layer failed to initialize' })
+  );
+  // Keep the message channel open for the async response
   return true;
 });
-
-// Handle side panel opening
-chrome.sidePanel.setPanelBehavior({
-  openPanelOnActionClick: true
-});
-
-// Handle tab updates for recording state
-chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
-  if (changeInfo.status === 'complete' && tab.url) {
-    // Notify content script about tab change
-    chrome.tabs.sendMessage(tabId, {
-      type: 'TAB_CHANGED',
-      url: tab.url
-    });
-  }
-});
-
-// Handle tab activation
-chrome.tabs.onActivated.addListener((activeInfo) => {
-  // Notify content script about tab activation
-  chrome.tabs.sendMessage(activeInfo.tabId, {
-    type: 'TAB_ACTIVATED'
-  });
-});
-
-console.log('FlowPilot service worker initialized');

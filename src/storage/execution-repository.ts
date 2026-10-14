@@ -9,15 +9,14 @@ import { IndexedDBStorage } from './indexeddb';
 export class ExecutionRepository {
   private storage: IndexedDBStorage;
 
-  constructor() {
-    this.storage = new IndexedDBStorage();
+  constructor(storage: IndexedDBStorage) {
+    this.storage = storage;
   }
 
   // Save an execution run
   async saveExecutionRun(run: ExecutionRun): Promise<string> {
     try {
       const id = await this.storage.saveRun(run);
-      console.log('Execution run saved successfully with ID:', id);
       return id;
     } catch (error) {
       console.error('Error saving execution run:', error);
@@ -29,11 +28,7 @@ export class ExecutionRepository {
   async getExecutionRun(id: string): Promise<ExecutionRun | null> {
     try {
       const run = await this.storage.getRun(id);
-      if (run) {
-        console.log('Execution run loaded successfully:', id);
-        return run;
-      }
-      return null;
+      return run ?? null;
     } catch (error) {
       console.error('Error loading execution run:', error);
       throw error;
@@ -43,10 +38,19 @@ export class ExecutionRepository {
   // Get execution runs for a workflow
   async getExecutionRunsForWorkflow(workflowId: string): Promise<ExecutionRun[]> {
     try {
-      // In a real implementation, this would query the database
-      // For now, returning empty array as placeholder
-      console.log('Loading execution runs for workflow:', workflowId);
-      return [];
+      const runs = await this.storage.getRunsForWorkflow(workflowId);
+      return runs;
+    } catch (error) {
+      console.error('Error loading execution runs:', error);
+      throw error;
+    }
+  }
+
+  // Get all execution runs
+  async getAllExecutionRuns(): Promise<ExecutionRun[]> {
+    try {
+      const runs = await this.storage.getAllRuns();
+      return runs;
     } catch (error) {
       console.error('Error loading execution runs:', error);
       throw error;
@@ -56,9 +60,7 @@ export class ExecutionRepository {
   // Save an execution step
   async saveExecutionStep(step: ExecutionStep): Promise<string> {
     try {
-      // In a real implementation, this would save the step
-      // For now, just log it
-      console.log('Execution step saved:', step.id);
+      // Execution steps are stored as part of their run in v1
       return step.id;
     } catch (error) {
       console.error('Error saving execution step:', error);
@@ -69,10 +71,8 @@ export class ExecutionRepository {
   // Get execution steps for a run
   async getExecutionStepsForRun(runId: string): Promise<ExecutionStep[]> {
     try {
-      // In a real implementation, this would query the database
-      // For now, returning empty array as placeholder
-      console.log('Loading execution steps for run:', runId);
-      return [];
+      const run = await this.getExecutionRun(runId);
+      return run?.steps ?? [];
     } catch (error) {
       console.error('Error loading execution steps:', error);
       throw error;
@@ -83,7 +83,6 @@ export class ExecutionRepository {
   async updateExecutionRun(run: ExecutionRun): Promise<void> {
     try {
       await this.storage.saveRun(run);
-      console.log('Execution run updated successfully:', run.id);
     } catch (error) {
       console.error('Error updating execution run:', error);
       throw error;
@@ -93,9 +92,7 @@ export class ExecutionRepository {
   // Delete an execution run
   async deleteExecutionRun(id: string): Promise<void> {
     try {
-      // In a real implementation, this would delete the run and associated steps
-      // For now, just log it
-      console.log('Execution run deleted:', id);
+      await this.storage.deleteRun(id);
     } catch (error) {
       console.error('Error deleting execution run:', error);
       throw error;

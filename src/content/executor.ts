@@ -1,11 +1,11 @@
-import { WorkflowStep } from '../shared/types';
+import { WorkflowStep, TargetDefinition } from '../shared/types';
 
 /**
  * Execution Engine for FlowPilot
  * Handles the execution of recorded workflows
  */
 export class Executor {
-  private isExecuting: boolean = false;
+  private isExecuting = false;
 
   /**
    * Execute a workflow
@@ -91,11 +91,11 @@ export class Executor {
     if (!step.target) return false;
 
     const element = this.resolveTarget(step.target);
-    if (element) {
-      element.click();
-      return true;
-    }
-    return false;
+    if (!element) return false;
+
+    element.scrollIntoView({ block: 'center' });
+    element.click();
+    return true;
   }
 
   /**
@@ -107,11 +107,22 @@ export class Executor {
     if (!step.target || !step.input) return false;
 
     const element = this.resolveTarget(step.target);
-    if (element && 'value' in element) {
-      (element as HTMLInputElement).value = step.input.value;
-      return true;
+    if (!(element instanceof HTMLInputElement) && !(element instanceof HTMLTextAreaElement)) {
+      return false;
     }
-    return false;
+
+    // Set the value through the native setter so framework state
+    // (React, Vue, ...) observes the change, then notify listeners
+    const prototype = element instanceof HTMLInputElement ? HTMLInputElement.prototype : HTMLTextAreaElement.prototype;
+    const descriptor = Object.getOwnPropertyDescriptor(prototype, 'value');
+    if (descriptor?.set) {
+      descriptor.set.call(element, step.input.value);
+    } else {
+      element.value = step.input.value;
+    }
+    element.dispatchEvent(new Event('input', { bubbles: true }));
+    element.dispatchEvent(new Event('change', { bubbles: true }));
+    return true;
   }
 
   /**
@@ -121,11 +132,11 @@ export class Executor {
    */
   private async executeWait(step: WorkflowStep): Promise<boolean> {
     if (!step.wait) return false;
+    const wait = step.wait;
 
-    // In a real implementation, this would wait for the specified condition
-    // For now, just a simple delay
+    // A minimal wait implementation that delays for the configured timeout
     return new Promise(resolve => {
-      setTimeout(() => resolve(true), step.wait.timeout || 1000);
+      setTimeout(() => resolve(true), wait.timeout || 1000);
     });
   }
 
@@ -134,12 +145,10 @@ export class Executor {
    * @param step - The navigation step to execute
    * @returns Promise that resolves with execution result
    */
-  private async executeNavigate(step: WorkflowStep): Promise<boolean> {
-    if (!step.target) return false;
-
-    // In a real implementation, this would navigate to the target URL
-    // For now, just return true
-    return true;
+  private async executeNavigate(_step: WorkflowStep): Promise<boolean> {
+    // Navigation steps are not created by the current recorder; failing
+    // honestly instead of pretending to succeed
+    return false;
   }
 
   /**
@@ -148,8 +157,13 @@ export class Executor {
    * @returns Promise that resolves with execution result
    */
   private async executeScroll(step: WorkflowStep): Promise<boolean> {
-    // In a real implementation, this would scroll to the specified position
-    // For now, just return true
+    if (step.target) {
+      const element = this.resolveTarget(step.target);
+      if (!element) return false;
+      element.scrollIntoView({ block: 'center' });
+      return true;
+    }
+    window.scrollBy({ top: window.innerHeight / 2 });
     return true;
   }
 
@@ -158,16 +172,32 @@ export class Executor {
    * @param target - The target definition
    * @returns The resolved element or null
    */
-  private resolveTarget(target: any): HTMLElement | null {
+  private resolveTarget(target: TargetDefinition): HTMLElement | null {
     // Try to resolve the target using the selectors in order of confidence
     for (const selector of target.selectors) {
+      // Coordinates are a recording-time fallback and cannot be resolved by query
+      if (selector.type === 'coordinates') continue;
       try {
-        const element = document.querySelector(selector.value);
-        if (element) {
-          return element as HTMLElement;
+        if (selector.type === 'xpath') {
+          const node = document.evaluate(
+            selector.value,
+            document,
+            null,
+            XPathResult.FIRST_ORDERED_NODE_TYPE,
+            null
+          ).singleNodeValue;
+          if (node instanceof HTMLElement) {
+            return node;
+          }
+          continue;
         }
-      } catch (error) {
-        console.warn('Failed to resolve selector:', selector.value);
+
+        const element = document.querySelector(selector.value);
+        if (element instanceof HTMLElement) {
+          return element;
+        }
+      } catch {
+        // Invalid or non-matching selector; fall through to the next one
       }
     }
     return null;

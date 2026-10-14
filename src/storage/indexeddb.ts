@@ -61,9 +61,10 @@ export class IndexedDBStorage {
     if (!this.db) {
       throw new Error('Database not initialized');
     }
+    const db = this.db;
 
     return new Promise((resolve, reject) => {
-      const transaction = this.db.transaction([WORKFLOW_STORE], 'readwrite');
+      const transaction = db.transaction([WORKFLOW_STORE], 'readwrite');
       const store = transaction.objectStore(WORKFLOW_STORE);
 
       const request = store.put(workflow);
@@ -87,9 +88,10 @@ export class IndexedDBStorage {
     if (!this.db) {
       throw new Error('Database not initialized');
     }
+    const db = this.db;
 
     return new Promise((resolve, reject) => {
-      const transaction = this.db.transaction([WORKFLOW_STORE], 'readonly');
+      const transaction = db.transaction([WORKFLOW_STORE], 'readonly');
       const store = transaction.objectStore(WORKFLOW_STORE);
 
       const request = store.get(id);
@@ -112,9 +114,10 @@ export class IndexedDBStorage {
     if (!this.db) {
       throw new Error('Database not initialized');
     }
+    const db = this.db;
 
     return new Promise((resolve, reject) => {
-      const transaction = this.db.transaction([WORKFLOW_STORE], 'readonly');
+      const transaction = db.transaction([WORKFLOW_STORE], 'readonly');
       const store = transaction.objectStore(WORKFLOW_STORE);
 
       const request = store.getAll();
@@ -138,9 +141,10 @@ export class IndexedDBStorage {
     if (!this.db) {
       throw new Error('Database not initialized');
     }
+    const db = this.db;
 
     return new Promise((resolve, reject) => {
-      const transaction = this.db.transaction([WORKFLOW_STORE], 'readwrite');
+      const transaction = db.transaction([WORKFLOW_STORE], 'readwrite');
       const store = transaction.objectStore(WORKFLOW_STORE);
 
       const request = store.delete(id);
@@ -164,9 +168,10 @@ export class IndexedDBStorage {
     if (!this.db) {
       throw new Error('Database not initialized');
     }
+    const db = this.db;
 
     return new Promise((resolve, reject) => {
-      const transaction = this.db.transaction([EXECUTION_STORE], 'readwrite');
+      const transaction = db.transaction([EXECUTION_STORE], 'readwrite');
       const store = transaction.objectStore(EXECUTION_STORE);
 
       const request = store.put(run);
@@ -190,9 +195,10 @@ export class IndexedDBStorage {
     if (!this.db) {
       throw new Error('Database not initialized');
     }
+    const db = this.db;
 
     return new Promise((resolve, reject) => {
-      const transaction = this.db.transaction([EXECUTION_STORE], 'readonly');
+      const transaction = db.transaction([EXECUTION_STORE], 'readonly');
       const store = transaction.objectStore(EXECUTION_STORE);
 
       const request = store.get(id);
@@ -216,9 +222,10 @@ export class IndexedDBStorage {
     if (!this.db) {
       throw new Error('Database not initialized');
     }
+    const db = this.db;
 
     return new Promise((resolve, reject) => {
-      const transaction = this.db.transaction([EXECUTION_STORE], 'readonly');
+      const transaction = db.transaction([EXECUTION_STORE], 'readonly');
       const store = transaction.objectStore(EXECUTION_STORE);
 
       const index = store.index('workflowId');
@@ -226,6 +233,67 @@ export class IndexedDBStorage {
 
       request.onsuccess = () => {
         resolve(request.result || []);
+      };
+
+      request.onerror = () => {
+        reject(request.error);
+      };
+    });
+  }
+
+  /**
+   * Delete an execution run
+   * @param id - The execution run ID
+   * @returns Promise with void
+   */
+  async deleteRun(id: string): Promise<void> {
+    if (!this.db) {
+      throw new Error('Database not initialized');
+    }
+    const db = this.db;
+
+    return new Promise((resolve, reject) => {
+      const transaction = db.transaction([EXECUTION_STORE], 'readwrite');
+      const store = transaction.objectStore(EXECUTION_STORE);
+
+      const request = store.delete(id);
+
+      request.onsuccess = () => {
+        resolve();
+      };
+
+      request.onerror = () => {
+        reject(request.error);
+      };
+    });
+  }
+
+  /**
+   * Get all execution runs
+   * @returns Promise with array of execution runs ordered by start time (newest first)
+   */
+  async getAllRuns(): Promise<any[]> {
+    if (!this.db) {
+      throw new Error('Database not initialized');
+    }
+    const db = this.db;
+
+    return new Promise((resolve, reject) => {
+      const transaction = db.transaction([EXECUTION_STORE], 'readonly');
+      const store = transaction.objectStore(EXECUTION_STORE);
+
+      const index = store.index('startTime');
+      const request = index.openCursor(null, 'prev');
+      const runs: any[] = [];
+
+      request.onsuccess = () => {
+        const cursor = request.result;
+        if (cursor) {
+          runs.push(cursor.value);
+          cursor.continue();
+        } else {
+          resolve(runs);
+        }
       };
 
       request.onerror = () => {

@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Shell(dir:*)",
+      "Shell(if:*)",
+      "Shell(else:*)",
+      "Shell(npm:*)",
+      "Shell(dir node_modules && type package-lock.json 2>nul | findstr /c:\"lockfileVersion\" /c:\"flowpilot\")",
+      "Shell(type:*)",
+      "Shell(echo:*)",
+      "Shell(node scripts/generate-icons.mjs)",
+      "Shell(del:*)"
+    ],
+    "deny": [],
+    "defaultMode": "bypassPermissions"
+  }
+}

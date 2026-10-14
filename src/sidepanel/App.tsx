@@ -1,109 +1,147 @@
-import React, { useState, useEffect } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import './styles.css';
+import type { ExecutionRun, Workflow } from '../shared/types';
 
-// Mock types for now - these would come from shared/types
-interface Workflow {
-  id: string;
-  name: string;
-  steps: number;
-  lastRun: string;
-  createdAt: string;
+interface RecordingStateResponse {
+  success: boolean;
+  isRecording: boolean;
+  stepCount: number;
 }
 
-interface ExecutionRun {
-  id: string;
-  workflowId: string;
-  status: 'success' | 'failed' | 'running';
-  timestamp: string;
+function sendMessage<T>(message: Record<string, unknown>): Promise<T | undefined> {
+  return new Promise((resolve) => {
+    chrome.runtime.sendMessage(message, (response) => {
+      resolve(response as T | undefined);
+    });
+  });
 }
+
+const formatDate = (timestamp: number) => new Date(timestamp).toLocaleString();
+
+const getStatusColor = (status: string) => {
+  switch (status) {
+    case 'success': return 'var(--success-green)';
+    case 'failed': return 'var(--error-red)';
+    case 'running': return 'var(--warning-amber)';
+    default: return 'var(--text-secondary)';
+  }
+};
+
+const getStatusText = (status: string) => {
+  switch (status) {
+    case 'success': return 'Success';
+    case 'failed': return 'Failed';
+    case 'running': return 'Running';
+    default: return status;
+  }
+};
 
 const App: React.FC = () => {
-  // Mock state for workflows and execution runs
   const [workflows, setWorkflows] = useState<Workflow[]>([]);
   const [executionRuns, setExecutionRuns] = useState<ExecutionRun[]>([]);
   const [isRecording, setIsRecording] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<'workflows' | 'history'>('workflows');
+  const [error, setError] = useState<string | null>(null);
 
-  // Mock data initialization
-  useEffect(() => {
-    // Simulate loading data
-    setTimeout(() => {
-      setWorkflows([
-        {
-          id: 'wf-1',
-          name: 'Login Workflow',
-          steps: 3,
-          lastRun: '2023-05-15T10:30:00Z',
-          createdAt: '2023-05-10T09:15:00Z'
-        },
-        {
-          id: 'wf-2',
-          name: 'Form Submission',
-          steps: 5,
-          lastRun: '2023-05-14T14:22:00Z',
-          createdAt: '2023-05-12T11:45:00Z'
-        }
-      ]);
-
-      setExecutionRuns([
-        {
-          id: 'run-1',
-          workflowId: 'wf-1',
-          status: 'success',
-          timestamp: '2023-05-15T10:30:00Z'
-        },
-        {
-          id: 'run-2',
-          workflowId: 'wf-2',
-          status: 'failed',
-          timestamp: '2023-05-14T14:22:00Z'
-        }
-      ]);
-
-      setIsLoading(false);
-    }, 500);
+  const loadWorkflows = useCallback(async () => {
+    const response = await sendMessage<{ success: boolean; workflows: Workflow[] }>({
+      type: 'LIST_WORKFLOWS'
+    });
+    if (response?.success) {
+      setWorkflows(response.workflows);
+      return true;
+    }
+    return false;
   }, []);
 
-  const handleStartRecording = () => {
-    setIsRecording(true);
-    // In a real implementation, this would communicate with the content script
-    console.log('Starting recording...');
-  };
-
-  const handleStopRecording = () => {
-    setIsRecording(false);
-    // In a real implementation, this would communicate with the content script
-    console.log('Stopping recording...');
-  };
-
-  const handleExecuteWorkflow = (workflowId: string) => {
-    console.log(`Executing workflow ${workflowId}`);
-    // In a real implementation, this would communicate with the content script
-  };
-
-  const formatDate = (dateString: string) => {
-    const date = new Date(dateString);
-    return date.toLocaleDateString();
-  };
-
-  const getStatusColor = (status: string) => {
-    switch (status) {
-      case 'success': return 'var(--success-green)';
-      case 'failed': return 'var(--error-red)';
-      case 'running': return 'var(--warning-amber)';
-      default: return 'var(--text-secondary)';
+  const loadExecutionRuns = useCallback(async () => {
+    const response = await sendMessage<{ success: boolean; runs: ExecutionRun[] }>({
+      type: 'LIST_RUNS'
+    });
+    if (response?.success) {
+      setExecutionRuns(response.runs);
+      return true;
     }
-  };
+    return false;
+  }, []);
 
-  const getStatusText = (status: string) => {
-    switch (status) {
-      case 'success': return 'Success';
-      case 'failed': return 'Failed';
-      case 'running': return 'Running';
-      default: return status;
+  useEffect(() => {
+    void Promise.all([loadWorkflows(), loadExecutionRuns()])
+      .catch(() => undefined)
+      .finally(() => setIsLoading(false));
+  }, [loadWorkflows, loadExecutionRuns]);
+
+  // Poll the recording state so the panel stays accurate while users browse
+  useEffect(() => {
+    let cancelled = false;
+
+    const poll = async () => {
+      const state = await sendMessage<RecordingStateResponse>({ type: 'GET_RECORDING_STATE' });
+      if (state?.success && !cancelled) {
+        setIsRecording(Boolean(state.isRecording));
+      }
+    };
+
+    void poll();
+    const interval = window.setInterval(() => void poll(), 2000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, []);
+
+  const handleStartRecording = useCallback(async () => {
+    setError(null);
+    const response = await sendMessage<{ success: boolean; error?: string }>({ type: 'START_RECORDING' });
+    if (response?.success) {
+      setIsRecording(true);
+    } else {
+      setIsRecording(false);
+      setError(response?.error ?? 'Failed to start recording');
     }
-  };
+  }, []);
+
+  const handleStopRecording = useCallback(async () => {
+    setError(null);
+    const response = await sendMessage<{ success: boolean; error?: string }>({ type: 'STOP_RECORDING' });
+    if (response?.success) {
+      setIsRecording(false);
+      await loadWorkflows();
+      setActiveTab('workflows');
+    } else {
+      setError(response?.error ?? 'Failed to stop recording');
+      setIsRecording(false);
+    }
+  }, [loadWorkflows]);
+
+  const handleExecuteWorkflow = useCallback(async (workflowId: string) => {
+    setError(null);
+    const response = await sendMessage<{ success: boolean; error?: string }>({
+      type: 'EXECUTE_WORKFLOW',
+      workflowId
+    });
+    if (response?.success) {
+      await Promise.all([loadWorkflows(), loadExecutionRuns()]);
+      setActiveTab('history');
+    } else {
+      setError(response?.error ?? 'Failed to execute workflow');
+    }
+  }, [loadWorkflows, loadExecutionRuns]);
+
+  const handleDeleteWorkflow = useCallback(async (workflowId: string) => {
+    setError(null);
+    const response = await sendMessage<{ success: boolean; error?: string }>({
+      type: 'DELETE_WORKFLOW',
+      id: workflowId
+    });
+    if (response?.success) {
+      await loadWorkflows();
+    } else {
+      setError(response?.error ?? 'Failed to delete workflow');
+    }
+  }, [loadWorkflows]);
 
   if (isLoading) {
     return (
@@ -129,17 +167,18 @@ const App: React.FC = () => {
       </div>
 
       <div className="button-group">
-        <button
-          className="button button-primary"
-          onClick={isRecording ? handleStopRecording : handleStartRecording}
-        >
-          {isRecording ? 'Stop Recording' : 'Start Recording'}
-        </button>
-      </div>
-
-      <div className="card">
-        <h2 className="card-title">Workflows</h2>
-        <p className="card-content">Manage your recorded automation workflows</p>
+        {error ? (
+          <p className="error-banner" role="alert">{error}</p>
+        ) : null}
+        {isRecording ? (
+          <button className="button button-primary" onClick={() => void handleStopRecording()}>
+            Stop Recording
+          </button>
+        ) : (
+          <button className="button button-primary" onClick={() => void handleStartRecording()}>
+            Start Recording
+          </button>
+        )}
       </div>
 
       <div className="card">
@@ -173,15 +212,21 @@ const App: React.FC = () => {
                     <div>
                       <h3 className="workflow-name">{workflow.name}</h3>
                       <p className="workflow-meta">
-                        {workflow.steps} steps • Last run: {formatDate(workflow.lastRun)}
+                        {workflow.steps.length} steps • Created: {formatDate(workflow.createdAt)}
                       </p>
                     </div>
                     <div className="workflow-actions">
                       <button
                         className="button button-secondary"
-                        onClick={() => handleExecuteWorkflow(workflow.id)}
+                        onClick={() => void handleExecuteWorkflow(workflow.id)}
                       >
                         Run
+                      </button>
+                      <button
+                        className="button button-destructive"
+                        onClick={() => void handleDeleteWorkflow(workflow.id)}
+                      >
+                        Delete
                       </button>
                     </div>
                   </li>
@@ -203,12 +248,12 @@ const App: React.FC = () => {
                   <li key={run.id} className="workflow-item">
                     <div>
                       <h3 className="workflow-name">
-                        Workflow Execution {run.id.split('-')[1]}
+                        {workflows.find(w => w.id === run.workflowId)?.name ?? 'Workflow'}
                       </h3>
                       <p className="workflow-meta">
-                        Status: <span style={{color: getStatusColor(run.status)}}>
+                        Status: <span style={{ color: getStatusColor(run.status) }}>
                           {getStatusText(run.status)}
-                        </span> • {formatDate(run.timestamp)}
+                        </span> • {formatDate(run.startTime)}
                       </p>
                     </div>
                   </li>

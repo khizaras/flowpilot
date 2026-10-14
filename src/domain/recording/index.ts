@@ -3,7 +3,7 @@
  * Contains recording-related business logic
  */
 
-import { WorkflowStep, StepType, TargetDefinition, Selector, ElementFingerprint } from '../../shared/types';
+import { WorkflowStep, TargetDefinition, Selector, ElementFingerprint } from '../../shared/types';
 
 export class RecordingManager {
   // Generate a workflow step from a click event
@@ -121,7 +121,7 @@ export class RecordingManager {
     let current = element;
 
     while (current && current.nodeType === Node.ELEMENT_NODE) {
-      let nodeName = current.nodeName.toLowerCase();
+      const nodeName = current.nodeName.toLowerCase();
       if (current.id) {
         path = `/${nodeName}[@id="${current.id}"]${path}`;
         break;
@@ -196,7 +196,7 @@ export class RecordingManager {
   }
 
   // Validate recording state
-  static validateRecordingState(isRecording: boolean): boolean {
+  static validateRecordingState(_isRecording: boolean): boolean {
     // In a real implementation, this would check for valid recording conditions
     return true;
   }

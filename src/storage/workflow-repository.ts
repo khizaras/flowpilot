@@ -9,8 +9,8 @@ import { IndexedDBStorage } from './indexeddb';
 export class WorkflowRepository {
   private storage: IndexedDBStorage;
 
-  constructor() {
-    this.storage = new IndexedDBStorage();
+  constructor(storage: IndexedDBStorage) {
+    this.storage = storage;
   }
 
   // Save a workflow

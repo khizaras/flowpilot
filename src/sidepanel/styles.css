@@ -67,6 +67,24 @@ body {
   gap: var(--small-spacing);
 }
 
+.button-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--medium-spacing);
+  margin-bottom: var(--large-spacing);
+}
+
+.error-banner {
+  width: 100%;
+  margin: 0;
+  padding: var(--medium-spacing) var(--large-spacing);
+  border-radius: 4px;
+  background-color: rgba(239, 68, 68, 0.1);
+  border: 1px solid var(--error-red);
+  color: var(--error-red);
+  font-size: 0.8125rem;
+}
+
 .button-primary {
   background-color: var(--primary-blue);
   color: white;

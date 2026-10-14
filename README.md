@@ -49,20 +49,23 @@ flowpilot/
 │   ├── storage/           # Data persistence layer
 │   ├── shared/            # Shared types and utilities
 │   └── tests/             # Test files
+├── public/                 # Static assets copied into dist/
+│   ├── manifest.json      # MV3 manifest (single source of truth)
+│   └── icons/             # Extension icons
+├── scripts/                # Build helpers (e.g. icon generation)
 ├── docs/                  # Documentation
-├── public/              # Static assets
-├── package.json         # Dependencies and scripts
-└── README.md            # This file
+├── package.json           # Dependencies and scripts
+└── README.md              # This file
 ```
 
 ### Available Scripts
 
-- `npm run dev` - Start development server
-- `npm run build` - Build for production
+- `npm run build` - Build the extension to `dist/` (this is the folder you load in Chrome)
 - `npm run typecheck` - Run TypeScript checks
 - `npm run lint` - Run ESLint
 - `npm run test` - Run unit tests
 - `npm run test:e2e` - Run end-to-end tests
+- `npm run dev` - Serve the side panel UI alone for visual iteration (outside the extension context; `chrome.*` APIs are unavailable)
 
 ## Documentation
 
