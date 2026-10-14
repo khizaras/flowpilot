@@ -1,5 +1,8 @@
-import { WorkflowStep, TargetDefinition } from '../shared/types';
+import { WorkflowStep } from '../shared/types';
 import { showExecutionBadge, showExecutionResult, flashTarget } from './overlay';
+import { resolveTarget, ResolveOptions } from './target-resolver';
+
+const STEP_PAUSE_MS = 120;
 
 /**
  * Execution Engine for FlowPilot
@@ -8,9 +11,18 @@ import { showExecutionBadge, showExecutionResult, flashTarget } from './overlay'
 export class Executor {
   private isExecuting = false;
   private lastError: string | null = null;
+  private onProgress?: (current: number, total: number) => void;
+
+  constructor(onProgress?: (current: number, total: number) => void) {
+    this.onProgress = onProgress;
+  }
 
   getLastError(): string | null {
     return this.lastError;
+  }
+
+  private resolveOptions(timeoutMs = 6000): ResolveOptions {
+    return { timeoutMs };
   }
 
   /**
@@ -43,6 +55,7 @@ export class Executor {
       // Execute each step in sequence
       for (let i = 0; i < steps.length; i++) {
         showExecutionBadge(i + 1, steps.length);
+        this.onProgress?.(i + 1, steps.length);
         try {
           const ok = await this.executeStep(steps[i]);
           if (!ok) {
@@ -53,8 +66,8 @@ export class Executor {
           throw new Error(`Step ${i + 1} of ${steps.length} (${steps[i].type}) failed: ${reason}`, { cause: error });
         }
 
-        // Add a small delay between steps for better UX
-        await this.delay(100);
+        // Add a small pause between steps so pages can react
+        await this.delay(STEP_PAUSE_MS);
       }
 
       console.log('Workflow execution completed successfully');
@@ -81,6 +94,8 @@ export class Executor {
         return await this.executeClick(step);
       case 'type':
         return await this.executeType(step);
+      case 'select':
+        return await this.executeSelect(step);
       case 'wait':
         return await this.executeWait(step);
       case 'navigate':
@@ -100,8 +115,8 @@ export class Executor {
   private async executeClick(step: WorkflowStep): Promise<boolean> {
     if (!step.target) return false;
 
-    const element = this.resolveTarget(step.target);
-    if (!element) return false;
+    const element = await resolveTarget(step.target, this.resolveOptions());
+    if (!(element instanceof HTMLElement)) return false;
 
     flashTarget(element);
     element.scrollIntoView({ block: 'center' });
@@ -110,29 +125,78 @@ export class Executor {
   }
 
   /**
-   * Execute a type step
+   * Execute a type step with per-character events so framework
+   * listeners (React, Vue, ...) observe realistic typing
    * @param step - The type step to execute
    * @returns Promise that resolves with execution result
    */
   private async executeType(step: WorkflowStep): Promise<boolean> {
     if (!step.target || !step.input) return false;
 
-    const element = this.resolveTarget(step.target);
+    const element = await resolveTarget(step.target, this.resolveOptions());
     if (!(element instanceof HTMLInputElement) && !(element instanceof HTMLTextAreaElement)) {
       return false;
     }
 
     flashTarget(element);
+    this.typeInto(element, step.input.value);
+    return true;
+  }
 
-    // Set the value through the native setter so framework state
-    // (React, Vue, ...) observes the change, then notify listeners
+  private typeInto(element: HTMLInputElement | HTMLTextAreaElement, value: string): void {
+    element.focus();
+
     const prototype = element instanceof HTMLInputElement ? HTMLInputElement.prototype : HTMLTextAreaElement.prototype;
     const descriptor = Object.getOwnPropertyDescriptor(prototype, 'value');
-    if (descriptor?.set) {
-      descriptor.set.call(element, step.input.value);
-    } else {
-      element.value = step.input.value;
+    const setValue = (next: string): void => {
+      if (descriptor?.set) {
+        descriptor.set.call(element, next);
+      } else {
+        element.value = next;
+      }
+    };
+
+    // Replace whatever the field already contains
+    setValue('');
+
+    let current = '';
+    for (const char of Array.from(value)) {
+      current += char;
+      element.dispatchEvent(new KeyboardEvent('keydown', { key: char, bubbles: true }));
+      setValue(current);
+      element.dispatchEvent(new Event('input', { bubbles: true }));
+      element.dispatchEvent(new KeyboardEvent('keyup', { key: char, bubbles: true }));
     }
+
+    element.dispatchEvent(new Event('change', { bubbles: true }));
+  }
+
+  /**
+   * Execute a select step, matching the recorded option by label, then value
+   * @param step - The select step to execute
+   * @returns Promise that resolves with execution result
+   */
+  private async executeSelect(step: WorkflowStep): Promise<boolean> {
+    if (!step.target || !step.input) return false;
+
+    const element = await resolveTarget(step.target, this.resolveOptions());
+    if (!(element instanceof HTMLSelectElement)) {
+      return false;
+    }
+
+    flashTarget(element);
+    const wanted = step.input.value;
+    const options = Array.from(element.options);
+    let index = options.findIndex(option => (option.textContent ?? '').trim() === wanted);
+    if (index < 0) {
+      index = options.findIndex(option => option.value === wanted);
+    }
+    if (index < 0) {
+      return false;
+    }
+
+    element.focus();
+    element.selectedIndex = index;
     element.dispatchEvent(new Event('input', { bubbles: true }));
     element.dispatchEvent(new Event('change', { bubbles: true }));
     return true;
@@ -171,49 +235,14 @@ export class Executor {
    */
   private async executeScroll(step: WorkflowStep): Promise<boolean> {
     if (step.target) {
-      const element = this.resolveTarget(step.target);
-      if (!element) return false;
+      // Scroll is non-essential; a short resolution window keeps runs snappy
+      const element = await resolveTarget(step.target, this.resolveOptions(1000));
+      if (!(element instanceof HTMLElement)) return false;
       element.scrollIntoView({ block: 'center' });
       return true;
     }
     window.scrollBy({ top: window.innerHeight / 2 });
     return true;
-  }
-
-  /**
-   * Resolve target element using selectors
-   * @param target - The target definition
-   * @returns The resolved element or null
-   */
-  private resolveTarget(target: TargetDefinition): HTMLElement | null {
-    // Try to resolve the target using the selectors in order of confidence
-    for (const selector of target.selectors) {
-      // Coordinates are a recording-time fallback and cannot be resolved by query
-      if (selector.type === 'coordinates') continue;
-      try {
-        if (selector.type === 'xpath') {
-          const node = document.evaluate(
-            selector.value,
-            document,
-            null,
-            XPathResult.FIRST_ORDERED_NODE_TYPE,
-            null
-          ).singleNodeValue;
-          if (node instanceof HTMLElement) {
-            return node;
-          }
-          continue;
-        }
-
-        const element = document.querySelector(selector.value);
-        if (element instanceof HTMLElement) {
-          return element;
-        }
-      } catch {
-        // Invalid or non-matching selector; fall through to the next one
-      }
-    }
-    return null;
   }
 
   /**

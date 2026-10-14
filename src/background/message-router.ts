@@ -6,6 +6,9 @@ import { ExecutionRepository } from '../storage/execution-repository';
 type ExtensionMessage = { type?: string; [key: string]: unknown };
 type MessageHandler = (message: ExtensionMessage, sender: chrome.runtime.MessageSender) => unknown | Promise<unknown>;
 
+// How long a workflow is allowed to run before the panel gives up waiting
+const EXECUTION_TIMEOUT_MS = 120000;
+
 function describeError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -170,10 +173,17 @@ export class MessageRouter {
 
     try {
       await this.ensureContentScript(tabId);
-      const response = (await chrome.tabs.sendMessage(tabId, {
+      const execution = chrome.tabs.sendMessage(tabId, {
         type: 'EXECUTE_WORKFLOW',
         workflow
-      })) as { success?: boolean; error?: string };
+      }) as Promise<{ success?: boolean; error?: string }>;
+
+      const response = await Promise.race([
+        execution,
+        new Promise<never>((_, reject) => {
+          setTimeout(() => reject(new Error('Workflow execution timed out')), EXECUTION_TIMEOUT_MS);
+        })
+      ]);
 
       if (response?.success === false) {
         run.status = 'failed';

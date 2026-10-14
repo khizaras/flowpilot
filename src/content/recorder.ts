@@ -144,6 +144,32 @@ export class Recorder {
   }
 
   /**
+   * Record a select dropdown change. The step stores the visible label of the
+   * chosen option (falling back to its value) for robust replay
+   * @param target - The select element
+   * @param label - Visible label of the selected option
+   */
+  recordSelect(target: HTMLSelectElement, label: string): void {
+    if (!this.isRecording) return;
+
+    const isSensitive = this.isSensitiveField(target);
+    const step: WorkflowStep = {
+      id: this.generateId(),
+      type: 'select',
+      enabled: true,
+      target: this.generateTargetDefinition(target),
+      input: {
+        value: isSensitive ? '' : label,
+        isSensitive,
+        masked: isSensitive
+      },
+      timestamp: Date.now()
+    };
+
+    this.commitStep(step);
+  }
+
+  /**
    * Record a keydown event
    * @param event - The keydown event
    */
@@ -155,6 +181,12 @@ export class Recorder {
   }
 
   private commitInput(target: HTMLInputElement, value: string): void {
+    // Focusing a field for typing also records a click; the two belong to one
+    // interaction, so the redundant standalone click is dropped
+    if (this.sameTarget(this.steps[this.steps.length - 1], target)) {
+      this.steps.pop();
+    }
+
     const isSensitive = this.isSensitiveField(target);
     const step: WorkflowStep = {
       id: this.generateId(),
@@ -171,6 +203,22 @@ export class Recorder {
     };
 
     this.commitStep(step);
+  }
+
+  /**
+   * Whether the last recorded step is a click on the same element
+   */
+  private sameTarget(step: WorkflowStep | undefined, element: HTMLElement): boolean {
+    if (!step || step.type !== 'click' || !step.target) {
+      return false;
+    }
+    const fingerprint = step.target.fingerprint;
+    return (
+      fingerprint.tag === element.tagName.toLowerCase() &&
+      fingerprint.id === element.id &&
+      (fingerprint.name ?? '') === (element.getAttribute('name') ?? '') &&
+      (fingerprint.ariaLabel ?? '') === (element.getAttribute('aria-label') ?? '')
+    );
   }
 
   private commitStep(step: WorkflowStep): void {
@@ -216,7 +264,7 @@ export class Recorder {
     if (element.id) {
       selectors.push({
         type: 'id',
-        value: `#${element.id}`,
+        value: `#${CSS.escape(element.id)}`,
         confidence: 0.95
       });
     }
@@ -229,10 +277,11 @@ export class Recorder {
       });
     }
 
+    // Tag-independent so aria hints survive tag changes (span -> button, etc.)
     if (element.getAttribute('aria-label')) {
       selectors.push({
         type: 'aria',
-        value: `button[aria-label="${element.getAttribute('aria-label')}"]`,
+        value: `[aria-label="${element.getAttribute('aria-label')}"]`,
         confidence: 0.85
       });
     }
@@ -251,14 +300,16 @@ export class Recorder {
       confidence: 0.60
     });
 
-    // Coordinates (fallback)
-    selectors.push({
-      type: 'coordinates',
-      value: `${element.getBoundingClientRect().left},${element.getBoundingClientRect().top}`,
-      confidence: 0.50
+    // Drop redundant duplicates (e.g. css selector identical to the id one)
+    const seen = new Set<string>();
+    return selectors.filter(selector => {
+      const key = `${selector.type}:${selector.value}`;
+      if (seen.has(key)) {
+        return false;
+      }
+      seen.add(key);
+      return true;
     });
-
-    return selectors;
   }
 
   /**

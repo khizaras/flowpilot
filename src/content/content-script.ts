@@ -3,7 +3,14 @@ import { Executor } from './executor';
 
 // Create recorder and executor instances
 const recorder = new Recorder();
-const executor = new Executor();
+
+// Execution progress is streamed to the side panel while a run is active
+const reportProgress = (current: number, total: number): void => {
+  void chrome.runtime.sendMessage({ type: 'RUN_PROGRESS', current, total }).catch(() => {
+    // No listener in the panel (e.g. it was closed mid-run)
+  });
+};
+const executor = new Executor(reportProgress);
 
 // Restore an in-progress recording after page loads/reloads/navigations
 void recorder.init();
@@ -62,6 +69,18 @@ document.addEventListener('input', (event) => {
   const target = event.target;
   if (target instanceof HTMLInputElement) {
     recorder.recordInput(target, target.value);
+  }
+}, true);
+
+// Select dropdowns fire change (not input) events
+document.addEventListener('change', (event) => {
+  if (!recorder.getIsRecording()) return;
+  const target = event.target;
+  if (target instanceof HTMLSelectElement) {
+    recorder.recordSelect(
+      target,
+      target.selectedOptions[0]?.textContent?.trim() ?? target.value
+    );
   }
 }, true);
 
