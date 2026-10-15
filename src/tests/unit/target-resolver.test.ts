@@ -79,6 +79,30 @@ describe('target resolver', () => {
     expect(await resolveTarget(target, { timeoutMs: 50, pollIntervalMs: 5 })).toBe(button);
   });
 
+  test('recovers when the element tag changed after recording', async () => {
+    const span = document.createElement('span');
+    span.textContent = 'Place order';
+    span.setAttribute('role', 'button');
+    document.body.appendChild(span);
+
+    const target = makeTarget({
+      selectors: [{ type: 'id', value: '#redesigned', confidence: 0.95 }],
+      fingerprint: {
+        tag: 'button', // the element used to be a button
+        text: 'Place order',
+        role: 'button',
+        ariaLabel: '',
+        name: null,
+        id: '',
+        classes: [],
+        attributes: {},
+        relativePosition: { x: 0.5, y: 0.5 }
+      }
+    });
+
+    expect(await resolveTarget(target, { timeoutMs: 50, pollIntervalMs: 5 })).toBe(span);
+  });
+
   test('returns null for genuinely missing elements after the timeout', async () => {
     const target = makeTarget({
       selectors: [{ type: 'id', value: '#nowhere', confidence: 0.95 }]

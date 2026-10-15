@@ -123,21 +123,35 @@ function scoreAgainstFingerprint(candidate: Element, fingerprint: ElementFingerp
     score += 2;
   }
 
+  // Stable structural attributes survive redesigns
+  const recordedType = fingerprint.attributes?.type;
+  if (recordedType && candidate.getAttribute('type') === recordedType) {
+    score += 2;
+  }
+
+  // Recorded viewport position helps disambiguate identical twins
+  const rect = (candidate as HTMLElement).getBoundingClientRect?.();
+  if (fingerprint.relativePosition && rect && rect.width > 0 && rect.height > 0) {
+    const dx = Math.abs(rect.left / window.innerWidth - fingerprint.relativePosition.x);
+    const dy = Math.abs(rect.top / window.innerHeight - fingerprint.relativePosition.y);
+    if (dx < 0.05 && dy < 0.08) {
+      score += 1.5;
+    }
+  }
+
   return score;
 }
 
 /**
- * Last-resort match: find the same-tag element whose attributes/text most
- * resemble the recorded fingerprint. Survives structural rewrites, moving
- * elements in the DOM, and dynamic class churn
+ * Last-resort match: find the element that most resembles the recorded
+ * fingerprint. Survives structural rewrites, moving elements in the DOM,
+ * dynamic class churn, and even tag changes (span -> button)
  */
 function resolveByFingerprint(fingerprint: ElementFingerprint): Element | null {
-  const tag = (fingerprint.tag || '*').toLowerCase();
-  const candidates = queryDeep(tag);
   let best: Element | null = null;
   let bestScore = 0;
 
-  for (const candidate of candidates) {
+  for (const candidate of queryDeep(fingerprint.tag || '*')) {
     const score = scoreAgainstFingerprint(candidate, fingerprint);
     if (score > bestScore) {
       bestScore = score;
@@ -145,7 +159,34 @@ function resolveByFingerprint(fingerprint: ElementFingerprint): Element | null {
     }
   }
 
+  // Stage 2: the recorded tag itself may have changed after a redesign
+  if (!(bestScore >= FINGERPRINT_MIN_SCORE && best)) {
+    for (const candidate of queryDeep('*')) {
+      const score = scoreAgainstFingerprint(candidate, fingerprint);
+      if (score > bestScore) {
+        bestScore = score;
+        best = candidate;
+      }
+    }
+  }
+
   return bestScore >= FINGERPRINT_MIN_SCORE && best ? best : null;
+}
+
+/**
+ * Extract the recorded page coordinates of a step, used as the final
+ * fallback when no selector and no fingerprint match anything
+ */
+export function resolveByCoordinates(target: TargetDefinition): { x: number; y: number } | null {
+  const coordinate = (target.selectors ?? []).find(selector => selector.type === 'coordinates');
+  if (!coordinate) {
+    return null;
+  }
+  const [x, y] = coordinate.value.split(',').map(part => Number(part));
+  if (!Number.isFinite(x) || !Number.isFinite(y)) {
+    return null;
+  }
+  return { x, y };
 }
 
 function resolveOnce(target: TargetDefinition): Element | null {

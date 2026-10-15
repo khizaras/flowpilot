@@ -279,6 +279,15 @@ export class Recorder {
       });
     }
 
+    // Form field names are among the most stable hooks available
+    if (element.getAttribute('name')) {
+      selectors.push({
+        type: 'css',
+        value: `[name="${element.getAttribute('name')?.replace(/"/g, '\\"')}"]`,
+        confidence: 0.88
+      });
+    }
+
     // CSS selector
     selectors.push({
       type: 'css',
@@ -291,6 +300,15 @@ export class Recorder {
       type: 'xpath',
       value: this.generateXPath(element),
       confidence: 0.60
+    });
+
+    // Coordinates: page coordinates at record time so replay can scroll
+    // back to the same absolute point
+    const rect = element.getBoundingClientRect();
+    selectors.push({
+      type: 'coordinates',
+      value: `${Math.round(rect.left + window.scrollX)},${Math.round(rect.top + window.scrollY)}`,
+      confidence: 0.5
     });
 
     // Drop redundant duplicates (e.g. css selector identical to the id one)
@@ -306,24 +324,62 @@ export class Recorder {
   }
 
   /**
-   * Generate CSS selector for an element
+   * Generate an unambiguous CSS selector: anchors on the closest id-bearing
+   * ancestor, includes structural :nth-of-type positions so repeated rows
+   * stay distinguishable, and skips hashed CSS-in-JS class churn
    * @param element - The DOM element
    * @returns CSS selector string
    */
   private generateCSSSelector(element: HTMLElement): string {
-    // Simple CSS selector generation
-    let selector = element.tagName.toLowerCase();
-
     if (element.id) {
-      selector += `#${element.id}`;
-    } else if (element.className) {
-      const classes = Array.from(element.classList).join('.');
-      if (classes) {
-        selector += `.${classes}`;
-      }
+      return `#${CSS.escape(element.id)}`;
     }
 
-    return selector;
+    const segments: string[] = [];
+    let current: HTMLElement | null = element;
+    let depth = 0;
+
+    while (current && depth < 6) {
+      const tag = current.tagName.toLowerCase();
+
+      if (current.id) {
+        segments.unshift(`#${CSS.escape(current.id)}`);
+        break;
+      }
+      if (current === document.body) {
+        segments.unshift('body');
+        break;
+      }
+
+      let segment = tag;
+      const stableClasses = Array.from(current.classList ?? []).filter(name => this.isStableClass(name));
+      if (stableClasses.length > 0) {
+        segment += stableClasses.map(name => `.${CSS.escape(name)}`).join('');
+      }
+
+      const parent: HTMLElement | null = current.parentElement;
+      if (parent) {
+        const cursor: HTMLElement = current;
+        const sameTag = Array.from(parent.children).filter(child => child.tagName === cursor.tagName);
+        if (sameTag.length > 1) {
+          segment += `:nth-of-type(${sameTag.indexOf(cursor) + 1})`;
+        }
+      }
+
+      segments.unshift(segment);
+      current = parent;
+      depth += 1;
+    }
+
+    return segments.join(' > ');
+  }
+
+  /**
+   * Class names holding long hex runs or double-underscore+digit hashes are
+   * generated names that churn between deployments and break selectors
+   */
+  private isStableClass(name: string): boolean {
+    return !/[0-9a-f]{5,}/i.test(name) && !/(__|--)[a-z]*\d/i.test(name);
   }
 
   /**
