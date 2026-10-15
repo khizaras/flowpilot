@@ -457,6 +457,25 @@ export class MessageRouter {
       .catch(() => undefined);
   }
 
+  private async getTabUrl(tabId: number): Promise<string> {
+    const tab = await chrome.tabs.get(tabId).catch(() => undefined);
+    return tab?.url ?? '';
+  }
+
+  /** URL equality ignoring the fragment so in-page anchors still reuse the tab */
+  private sameUrl(a: string, b: string): boolean {
+    const normalize = (url: string): string => {
+      try {
+        const parsed = new URL(url);
+        parsed.hash = '';
+        return parsed.toString();
+      } catch {
+        return url;
+      }
+    };
+    return normalize(a) === normalize(b);
+  }
+
   private async handleExecuteWorkflow(message: ExtensionMessage, sender: chrome.runtime.MessageSender): Promise<unknown> {
     const workflowId = typeof message.workflowId === 'string' ? message.workflowId : undefined;
     if (!workflowId) {
@@ -495,16 +514,30 @@ export class MessageRouter {
 
     this.isExecutingRun = true;
     let failure: string | undefined;
+    let runTabId = tabId;
+
     try {
-      await this.ensureContentScripts(tabId);
-      const outcome = await this.runStepsOnTab(tabId, workflow, run);
+      // A workflow with a captured start page begins there: reuse the active
+      // tab when it is already showing that URL, otherwise open it and wait
+      // for the load before the first step
+      if (workflow.startUrl && !this.sameUrl(await this.getTabUrl(tabId), workflow.startUrl)) {
+        const opened = await chrome.tabs.create({ url: workflow.startUrl, active: true });
+        if (typeof opened?.id !== 'number') {
+          throw new Error('Could not open the workflow start page');
+        }
+        runTabId = opened.id;
+        await this.waitForTabLoad(runTabId);
+      }
+
+      await this.ensureContentScripts(runTabId);
+      const outcome = await this.runStepsOnTab(runTabId, workflow, run);
       run.status = outcome.status;
       failure = outcome.error;
-      this.broadcastResult(tabId, outcome.status === 'success');
+      this.broadcastResult(runTabId, outcome.status === 'success');
     } catch (error) {
       failure = describeError(error);
       run.status = 'failed';
-      this.broadcastResult(tabId, false, failure);
+      this.broadcastResult(runTabId, false, failure);
     } finally {
       this.isExecutingRun = false;
     }

@@ -3,7 +3,7 @@
 - Prefers autonomous continuation without asking for further questions, clarification, or permission to proceed. Resume and execute the next logical step directly. Fresh confirmation in a new session ("proceed" as the sole instruction to kick off a full implementation) reinforces this. Confidence: 0.85
 - Wants production-ready solutions rather than quick fixes, temporary patches, or throwaway code. Expects robust, well-architected implementations that meet a production quality bar. Confidence: 0.75
 - Wants root-cause analysis before fixing bugs: trace/read the relevant code paths first, then fix the underlying semantic bugs rather than patching symptoms on the surface. Confidence: 0.8
-- Wants every change batch verified against the full quality pipeline (lint, typecheck, tests, build) before reporting done — and wants built artifacts spot-checked to confirm the change actually landed (e.g. grep the dist bundle). Confidence: 0.85
+- Wants every change batch verified against the full quality pipeline (lint, typecheck, tests, build) before reporting done — and wants built artifacts spot-checked to confirm the change actually landed (e.g. grep the dist bundle). Confidence: 0.9
 - Prefers multi-part work tracked with a todo list, created up front and kept updated as items complete. Confidence: 0.8
 - Cares about premium, polished UI quality — explicitly chose to "revamp the ui with premium look and feel", framing visual design as a first-class requirement alongside functionality. Confidence: 0.85
 - Reports recurring problems framed as requests for advanced/smart upgrades (e.g. "i want to make it more smart and revamp the ui"), not just minimal bug fixes — respond with ambitious, feature-rich improvements plus the fix. Confidence: 0.75
