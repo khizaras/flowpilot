@@ -3,11 +3,29 @@ import { IndexedDBStorage } from '../storage/indexeddb';
 import { WorkflowRepository } from '../storage/workflow-repository';
 import { ExecutionRepository } from '../storage/execution-repository';
 
+const TICKER_ALARM = 'flowpilot-ticker';
+
 chrome.runtime.onInstalled.addListener(() => {
   chrome.sidePanel
     .setPanelBehavior({ openPanelOnActionClick: true })
     .catch((error) => console.error('Failed to configure side panel behavior:', error));
+  // Alarms are cleared when the extension (re)loads; arm the ticker again
+  createTicker();
 });
+
+chrome.runtime.onStartup.addListener(() => {
+  createTicker();
+});
+
+function createTicker(): void {
+  try {
+    chrome.alarms.create(TICKER_ALARM, { periodInMinutes: 1 });
+  } catch (error) {
+    console.error('Failed to create the schedule ticker:', error);
+  }
+}
+
+createTicker();
 
 const routerPromise = createRouter();
 
@@ -27,4 +45,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   );
   // Keep the message channel open for the async response
   return true;
+});
+
+chrome.alarms.onAlarm.addListener((alarm) => {
+  if (alarm.name !== TICKER_ALARM) {
+    return;
+  }
+  void routerPromise
+    .then((router) => router.tickScheduledWorkflows())
+    .catch((error) => console.error('Schedule tick failed:', error));
 });

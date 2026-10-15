@@ -61,6 +61,22 @@ export interface WorkflowStep {
   // Add other properties as needed
 }
 
+export type ScheduleFrequency = 'once' | 'daily' | 'weekly' | 'interval';
+
+/**
+ * Automatic run schedule attached to a workflow.
+ * `time` is HH:MM local time; `weekdays` are 0 (Sun) - 6 (Sat)
+ */
+export interface WorkflowSchedule {
+  enabled: boolean;
+  frequency: ScheduleFrequency;
+  time?: string;
+  weekdays?: number[];
+  intervalMinutes?: number;
+  startAt?: string;
+  occurrences?: number;
+}
+
 export interface Workflow {
   id: string;
   name: string;
@@ -68,6 +84,8 @@ export interface Workflow {
   steps: WorkflowStep[];
   createdAt: number;
   updatedAt: number;
+  startUrl?: string;
+  schedule?: WorkflowSchedule;
   // Add other properties as needed
 }
 

@@ -30,6 +30,6 @@
       "all_frames": true
     }
   ],
-  "permissions": ["storage", "sidePanel", "scripting", "webNavigation"],
+  "permissions": ["storage", "sidePanel", "scripting", "webNavigation", "alarms"],
   "host_permissions": ["<all_urls>"]
 }

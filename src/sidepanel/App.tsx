@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import './styles.css';
-import type { ExecutionRun, Workflow, WorkflowStep } from '../shared/types';
+import type { ExecutionRun, Workflow, WorkflowSchedule, WorkflowStep } from '../shared/types';
 
 interface RecordingStateResponse {
   success: boolean;
@@ -33,6 +33,14 @@ const relativeTime = (timestamp: number): string => {
   return new Date(timestamp).toLocaleDateString();
 };
 
+const hostLabel = (url: string): string => {
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return url.slice(0, 40);
+  }
+};
+
 /**
  * Human-readable description of a recorded step, used in the detail view
  */
@@ -58,6 +66,35 @@ const describeStep = (step: WorkflowStep): string => {
       return step.type;
   }
 };
+
+/**
+ * Short human summary of a schedule, shown on the workflow row
+ */
+const describeSchedule = (schedule: WorkflowSchedule | undefined): string | null => {
+  if (!schedule?.enabled) return null;
+  switch (schedule.frequency) {
+    case 'daily':
+      return `daily at ${schedule.time}`;
+    case 'weekly': {
+      const names = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+      const days = (schedule.weekdays ?? []).map(day => names[day]).join(', ');
+      return `weekly on ${days} at ${schedule.time}`;
+    }
+    case 'interval':
+      return `every ${schedule.intervalMinutes ?? 60}m`;
+    case 'once': {
+      const at = Date.parse(schedule.startAt ?? '');
+      return Number.isFinite(at) ? `once at ${new Date(at).toLocaleString()}` : 'schedule incomplete';
+    }
+    default:
+      return null;
+  }
+};
+
+// Monday-first ordering for the weekday picker
+const WEEKDAYS: Array<[number, string]> = [
+  [1, 'Mon'], [2, 'Tue'], [3, 'Wed'], [4, 'Thu'], [5, 'Fri'], [6, 'Sat'], [0, 'Sun']
+];
 
 function LogoMark() {
   return (
@@ -155,6 +192,30 @@ function FailureIcon() {
   );
 }
 
+function ExportIcon() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 14 14" aria-hidden="true" focusable="false">
+      <path d="M4 5.5 7 2.5l3 3M7 3v7.5M2.5 11.5h9" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" fill="none" />
+    </svg>
+  );
+}
+
+function MoveUpIcon() {
+  return (
+    <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true" focusable="false">
+      <path d="m2 6.5 3-3 3 3" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" fill="none" />
+    </svg>
+  );
+}
+
+function MoveDownIcon() {
+  return (
+    <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true" focusable="false">
+      <path d="m2 3.5 3 3 3-3" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" fill="none" />
+    </svg>
+  );
+}
+
 function WorkflowsEmptyIcon() {
   return (
     <svg width="26" height="26" viewBox="0 0 26 26" aria-hidden="true" focusable="false">
@@ -174,6 +235,176 @@ function HistoryEmptyIcon() {
   );
 }
 
+/**
+ * Schedule editor shown inside a workflow's detail view
+ */
+function ScheduleEditor(props: {
+  value: WorkflowSchedule | undefined;
+  timesRun: number;
+  onSave: (schedule: WorkflowSchedule) => void;
+  busy: boolean;
+}) {
+  const { value, timesRun, onSave, busy } = props;
+  const [enabled, setEnabled] = useState(value?.enabled ?? false);
+  const [frequency, setFrequency] = useState(value?.frequency ?? 'daily');
+  const [time, setTime] = useState(value?.time ?? '09:00');
+  const [weekdays, setWeekdays] = useState<number[]>(value?.weekdays ?? [1, 2, 3, 4, 5]);
+  const [intervalMinutes, setIntervalMinutes] = useState(value?.intervalMinutes ?? 60);
+  const [startAt, setStartAt] = useState(
+    value?.startAt ? value.startAt.slice(0, 16) : ''
+  );
+  const [occurrenceDraft, setOccurrenceDraft] = useState(
+    value?.occurrences ? String(value.occurrences) : '0'
+  );
+
+  const save = () => {
+    const schedule: WorkflowSchedule = { enabled, frequency };
+    if (frequency === 'daily' || frequency === 'weekly') {
+      schedule.time = time;
+    }
+    if (frequency === 'weekly') {
+      schedule.weekdays = weekdays;
+    }
+    if (frequency === 'interval') {
+      schedule.intervalMinutes = intervalMinutes;
+    }
+    if (frequency === 'once') {
+      schedule.startAt = startAt ? new Date(startAt).toISOString() : '';
+    }
+    const occurrences = Number(occurrenceDraft);
+    if (Number.isFinite(occurrences) && occurrences > 0) {
+      schedule.occurrences = Math.round(occurrences);
+    }
+    onSave(schedule);
+  };
+
+  return (
+    <div className="sched">
+      <div className="sched-head">
+        <p className="detail-title">Schedule</p>
+        <span className="sched-run-count">Times run: {timesRun}</span>
+      </div>
+
+      <label className="sched-enable">
+        <label className="switch">
+          <input
+            type="checkbox"
+            checked={enabled}
+            aria-label="Run this workflow automatically"
+            onChange={event => setEnabled(event.target.checked)}
+          />
+          <span className="switch-track" aria-hidden="true" />
+        </label>
+        <span className="sched-enable-label">{enabled ? 'Runs automatically' : 'Runs only when you press Run'}</span>
+      </label>
+
+      {enabled ? (
+        <div className="sched-fields">
+          <div className="sched-row">
+            <label className="field-label" htmlFor={`${frequency}-freq`}>Frequency</label>
+            <select
+              id={`${frequency}-freq`}
+              className="input input-select"
+              value={frequency}
+              onChange={event => setFrequency(event.target.value as WorkflowSchedule['frequency'])}
+            >
+              <option value="once">Once at date/time</option>
+              <option value="daily">Daily at time</option>
+              <option value="weekly">Weekly on days</option>
+              <option value="interval">Every N minutes</option>
+            </select>
+          </div>
+
+          {frequency === 'daily' || frequency === 'weekly' ? (
+            <div className="sched-row">
+              <label className="field-label" htmlFor="fp-time">At time</label>
+              <input
+                id="fp-time"
+                className="input"
+                type="time"
+                value={time}
+                onChange={event => setTime(event.target.value)}
+              />
+            </div>
+          ) : null}
+
+          {frequency === 'weekly' ? (
+            <div className="sched-row">
+              <span className="field-label">On days</span>
+              <div className="chip-row">
+                {WEEKDAYS.map(([day, label]) => (
+                  <button
+                    key={day}
+                    type="button"
+                    className={`chip ${weekdays.includes(day) ? 'chip-on' : ''}`}
+                    aria-pressed={weekdays.includes(day)}
+                    onClick={() =>
+                      setWeekdays(prev =>
+                        prev.includes(day) ? prev.filter(d => d !== day) : [...prev, day]
+                      )
+                    }
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : null}
+
+          {frequency === 'interval' ? (
+            <div className="sched-row">
+              <label className="field-label" htmlFor="fp-interval">Every (minutes)</label>
+              <input
+                id="fp-interval"
+                className="input"
+                type="number"
+                min={1}
+                value={intervalMinutes}
+                onChange={event => setIntervalMinutes(Number(event.target.value))}
+              />
+            </div>
+          ) : null}
+
+          {frequency === 'once' ? (
+            <div className="sched-row">
+              <label className="field-label" htmlFor="fp-start-at">Run at</label>
+              <input
+                id="fp-start-at"
+                className="input"
+                type="datetime-local"
+                value={startAt}
+                onChange={event => setStartAt(event.target.value)}
+              />
+            </div>
+          ) : null}
+
+          <div className="sched-row">
+            <label className="field-label" htmlFor="fp-occurrences">Stop after (0 = forever)</label>
+            <input
+              id="fp-occurrences"
+              className="input input-narrow"
+              type="number"
+              min={0}
+              value={occurrenceDraft}
+              onChange={event => setOccurrenceDraft(event.target.value)}
+            />
+          </div>
+
+          <p className="card-note">
+            The workflow opens its start page in a background tab when due. Chrome restarts keep schedules running.
+          </p>
+        </div>
+      ) : null}
+
+      <div className="naming-actions">
+        <button className="btn btn-primary btn-small" disabled={busy} onClick={save}>
+          Save schedule
+        </button>
+      </div>
+    </div>
+  );
+}
+
 const App: React.FC = () => {
   const [workflows, setWorkflows] = useState<Workflow[]>([]);
   const [executionRuns, setExecutionRuns] = useState<ExecutionRun[]>([]);
@@ -190,6 +421,14 @@ const App: React.FC = () => {
   const [startUrl, setStartUrl] = useState('');
   const [namingWorkflow, setNamingWorkflow] = useState<Workflow | null>(null);
   const [nameDraft, setNameDraft] = useState('');
+  const [descDraft, setDescDraft] = useState('');
+  const [openStepKey, setOpenStepKey] = useState<string | null>(null);
+  const [valueDraft, setValueDraft] = useState('');
+  const [credentialMap, setCredentialMap] = useState<Record<string, string[] | undefined>>({});
+  const [secretTarget, setSecretTarget] = useState<string | null>(null);
+  const [secretDraft, setSecretDraft] = useState('');
+  const [runCounts, setRunCounts] = useState<Record<string, number>>({});
+  const [scheduleBusyId, setScheduleBusyId] = useState<string | null>(null);
 
   const loadWorkflows = useCallback(async () => {
     const response = await sendMessage<{ success: boolean; workflows: Workflow[] }>({
@@ -284,6 +523,62 @@ const App: React.FC = () => {
     };
   }, [openRunId]);
 
+  // Load credential presence and schedule counters when a workflow expands
+  useEffect(() => {
+    if (!openWorkflowId) return;
+    let cancelled = false;
+    void (async () => {
+      const [credResponse, schedResponse] = await Promise.all([
+        sendMessage<{ success: boolean; stepIds?: string[] }>({ type: 'GET_CREDENTIALS', id: openWorkflowId }),
+        sendMessage<{ success: boolean; timesRun?: number }>({ type: 'GET_SCHEDULE', id: openWorkflowId })
+      ]);
+      if (cancelled) return;
+      if (credResponse?.success) {
+        setCredentialMap(prev => ({ ...prev, [openWorkflowId]: credResponse.stepIds ?? [] }));
+      }
+      if (schedResponse?.success) {
+        setRunCounts(prev => ({ ...prev, [openWorkflowId]: schedResponse.timesRun ?? 0 }));
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [openWorkflowId]);
+
+  const refreshCredentials = useCallback(async (workflowId: string) => {
+    const response = await sendMessage<{ success: boolean; stepIds?: string[] }>({
+      type: 'GET_CREDENTIALS',
+      id: workflowId
+    });
+    if (response?.success) {
+      setCredentialMap(prev => ({ ...prev, [workflowId]: response.stepIds ?? [] }));
+    }
+  }, []);
+
+  const persistWorkflow = useCallback(async (updated: Workflow): Promise<boolean> => {
+    setWorkflows(prev => prev.map(w => (w.id === updated.id ? updated : w)));
+    const response = await sendMessage<{ success: boolean; error?: string }>({
+      type: 'SAVE_WORKFLOW',
+      workflow: updated
+    });
+    if (!response?.success) {
+      await loadWorkflows();
+      setError(response?.error ?? 'Failed to save the change');
+      return false;
+    }
+    return true;
+  }, [loadWorkflows]);
+
+  const updateSteps = useCallback(
+    async (workflowId: string, mutate: (steps: WorkflowStep[]) => WorkflowStep[]) => {
+      const workflow = workflows.find(w => w.id === workflowId);
+      if (!workflow) return;
+      const updated: Workflow = { ...workflow, steps: mutate([...workflow.steps]) };
+      await persistWorkflow(updated);
+    },
+    [workflows, persistWorkflow]
+  );
+
   const handleStartRecording = useCallback(async () => {
     setError(null);
     const response = await sendMessage<{ success: boolean; error?: string; message?: string }>({
@@ -311,6 +606,7 @@ const App: React.FC = () => {
       if (response.workflow) {
         setNamingWorkflow(response.workflow);
         setNameDraft(response.workflow.name);
+        setDescDraft(response.workflow.description ?? '');
       }
     } else {
       setError(response?.error ?? 'Failed to stop recording');
@@ -318,7 +614,7 @@ const App: React.FC = () => {
     }
   }, [loadWorkflows]);
 
-  const handleSaveWorkflowName = useCallback(async () => {
+  const handleSaveWorkflowIdentity = useCallback(async () => {
     if (!namingWorkflow) return;
     setError(null);
     const name = nameDraft.trim();
@@ -326,9 +622,14 @@ const App: React.FC = () => {
       setError('Give the workflow a name');
       return;
     }
+    const description = descDraft.trim();
     const response = await sendMessage<{ success: boolean; error?: string }>({
       type: 'SAVE_WORKFLOW',
-      workflow: { ...namingWorkflow, name }
+      workflow: {
+        ...namingWorkflow,
+        name,
+        description: description.length > 0 ? description : undefined
+      }
     });
     if (response?.success) {
       setNamingWorkflow(null);
@@ -337,14 +638,14 @@ const App: React.FC = () => {
     } else {
       setError(response?.error ?? 'Failed to save the workflow');
     }
-  }, [namingWorkflow, nameDraft, loadWorkflows]);
+  }, [namingWorkflow, nameDraft, descDraft, loadWorkflows]);
 
   const handleExecuteWorkflow = useCallback(async (workflowId: string) => {
     setError(null);
     setRunningWorkflowId(workflowId);
     setRunProgress({ current: 0, total: 0 });
     try {
-      const response = await sendMessage<{ success: boolean; error?: string }>({
+      const response = await sendMessage<{ success: boolean; error?: string; runId?: string }>({
         type: 'EXECUTE_WORKFLOW',
         workflowId
       });
@@ -377,6 +678,7 @@ const App: React.FC = () => {
   const handleToggleWorkflow = useCallback((workflowId: string) => {
     setError(null);
     setOpenWorkflowId(prev => (prev === workflowId ? null : workflowId));
+    setOpenStepKey(null);
   }, []);
 
   const handleToggleRun = useCallback((runId: string) => {
@@ -384,28 +686,164 @@ const App: React.FC = () => {
     setOpenRunId(prev => (prev === runId ? null : runId));
   }, []);
 
-  const handleToggleStep = useCallback(async (workflowId: string, stepId: string) => {
-    const workflow = workflows.find(w => w.id === workflowId);
-    if (!workflow) return;
+  const handleToggleStep = useCallback((key: string, step: WorkflowStep) => {
+    setOpenStepKey(prev => (prev === key ? null : key));
+    setValueDraft(
+      step.type === 'wait'
+        ? String((step.wait?.timeout ?? 1000) / 1000)
+        : (step.input?.value ?? '')
+    );
+    setSecretTarget(null);
+    setSecretDraft('');
+  }, []);
 
-    const updated: Workflow = {
-      ...workflow,
-      steps: workflow.steps.map(step =>
-        step.id === stepId ? { ...step, enabled: !step.enabled } : step
-      )
-    };
+  const handleToggleStepEnabled = useCallback(async (workflowId: string, stepId: string) => {
+    await updateSteps(workflowId, steps =>
+      steps.map(step => (step.id === stepId ? { ...step, enabled: !step.enabled } : step))
+    );
+  }, [updateSteps]);
 
-    // Optimistic update; revert when the background rejects the save
-    setWorkflows(prev => prev.map(w => (w.id === workflowId ? updated : w)));
-    const response = await sendMessage<{ success: boolean; error?: string }>({
-      type: 'SAVE_WORKFLOW',
-      workflow: updated
-    });
-    if (!response?.success) {
-      await loadWorkflows();
-      setError(response?.error ?? 'Failed to update step');
+  const handleApplyStepValue = useCallback(async (workflowId: string, step: WorkflowStep) => {
+    if (step.type === 'wait') {
+      const seconds = Number(valueDraft);
+      if (!Number.isFinite(seconds) || seconds <= 0) {
+        setError('Wait duration must be a positive number of seconds');
+        return;
+      }
+      await updateSteps(workflowId, steps =>
+        steps.map(s =>
+          s.id === step.id ? { ...s, wait: { ...(s.wait ?? {}), timeout: Math.round(seconds * 1000) } } : s
+        )
+      );
+      return;
     }
-  }, [workflows, loadWorkflows]);
+    if (step.type === 'type' || step.type === 'select') {
+      await updateSteps(workflowId, steps =>
+        steps.map(s =>
+          s.id === step.id && s.input ? { ...s, input: { ...s.input, value: valueDraft } } : s
+        )
+      );
+      return;
+    }
+  }, [valueDraft, updateSteps]);
+
+  const handleMoveStep = useCallback(async (workflowId: string, index: number, direction: -1 | 1) => {
+    await updateSteps(workflowId, steps => {
+      const target = index + direction;
+      if (target < 0 || target >= steps.length) {
+        return steps;
+      }
+      const next = [...steps];
+      const [moved] = next.splice(index, 1);
+      next.splice(target, 0, moved);
+      return next;
+    });
+  }, [updateSteps]);
+
+  const handleDeleteStep = useCallback(async (workflowId: string, stepId: string) => {
+    setOpenStepKey(null);
+    await updateSteps(workflowId, steps => steps.filter(step => step.id !== stepId));
+  }, [updateSteps]);
+
+  const handleExportWorkflow = useCallback(async (workflow: Workflow) => {
+    setError(null);
+    const response = await sendMessage<{ success: boolean; error?: string; json?: string; filename?: string }>({
+      type: 'EXPORT_WORKFLOW',
+      id: workflow.id
+    });
+    if (response?.success && typeof response.json === 'string') {
+      const blob = new Blob([response.json], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = response.filename ?? `${workflow.name}.flowpilot.json`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 2000);
+    } else {
+      setError(response?.error ?? 'Export failed');
+    }
+  }, []);
+
+  const handleImportFile = useCallback(async (file: File | undefined) => {
+    setError(null);
+    if (!file) return;
+    if (!file.name.toLowerCase().endsWith('.json')) {
+      setError('Select a .json workflow file');
+      return;
+    }
+    let json: string;
+    try {
+      json = await file.text();
+    } catch {
+      setError('The file could not be read');
+      return;
+    }
+    const response = await sendMessage<{ success: boolean; error?: string }>({
+      type: 'IMPORT_WORKFLOW',
+      json
+    });
+    if (response?.success) {
+      await loadWorkflows();
+    } else {
+      setError(response?.error ?? 'Import failed');
+    }
+  }, [loadWorkflows]);
+
+  const handleSaveCredential = useCallback(async (workflowId: string, stepId: string) => {
+    setError(null);
+    if (!secretDraft.trim()) {
+      setError('Enter the credential value first');
+      return;
+    }
+    const response = await sendMessage<{ success: boolean; error?: string }>({
+      type: 'SET_CREDENTIAL',
+      id: workflowId,
+      stepId,
+      value: secretDraft
+    });
+    if (response?.success) {
+      setSecretTarget(null);
+      setSecretDraft('');
+      await refreshCredentials(workflowId);
+    } else {
+      setError(response?.error ?? 'Failed to store the credential');
+    }
+  }, [secretDraft, refreshCredentials]);
+
+  const handleRemoveCredential = useCallback(async (workflowId: string, stepId: string) => {
+    setError(null);
+    const response = await sendMessage<{ success: boolean; error?: string }>({
+      type: 'DELETE_CREDENTIAL',
+      id: workflowId,
+      stepId
+    });
+    if (response?.success) {
+      await refreshCredentials(workflowId);
+    } else {
+      setError(response?.error ?? 'Failed to remove the credential');
+    }
+  }, [refreshCredentials]);
+
+  const handleSaveSchedule = useCallback(async (workflowId: string, schedule: WorkflowSchedule) => {
+    setError(null);
+    setScheduleBusyId(workflowId);
+    try {
+      const response = await sendMessage<{ success: boolean; error?: string }>({
+        type: 'SET_SCHEDULE',
+        id: workflowId,
+        schedule
+      });
+      if (response?.success) {
+        await loadWorkflows();
+      } else {
+        setError(response?.error ?? 'Failed to save the schedule');
+      }
+    } finally {
+      setScheduleBusyId(null);
+    }
+  }, [loadWorkflows]);
 
   if (isLoading) {
     return (
@@ -492,7 +930,7 @@ const App: React.FC = () => {
       </section>
 
       {namingWorkflow ? (
-        <section className="naming" aria-label="Name the recorded workflow">
+        <section className="naming" aria-label="Save the recorded workflow">
           <div className="naming-head">
             <p className="naming-title">Name this workflow</p>
             <p className="naming-meta">
@@ -508,7 +946,19 @@ const App: React.FC = () => {
             onChange={event => setNameDraft(event.target.value)}
             onKeyDown={event => {
               if (event.key === 'Enter') {
-                void handleSaveWorkflowName();
+                void handleSaveWorkflowIdentity();
+              }
+            }}
+          />
+          <input
+            className="naming-input"
+            value={descDraft}
+            placeholder="Description (optional)"
+            aria-label="Workflow description"
+            onChange={event => setDescDraft(event.target.value)}
+            onKeyDown={event => {
+              if (event.key === 'Enter') {
+                void handleSaveWorkflowIdentity();
               }
             }}
           />
@@ -516,7 +966,7 @@ const App: React.FC = () => {
             <button className="btn btn-small" onClick={() => setNamingWorkflow(null)}>
               Keep default
             </button>
-            <button className="btn btn-primary" onClick={() => void handleSaveWorkflowName()}>
+            <button className="btn btn-primary" onClick={() => void handleSaveWorkflowIdentity()}>
               Save workflow
             </button>
           </div>
@@ -571,6 +1021,26 @@ const App: React.FC = () => {
 
       {activeTab === 'workflows' ? (
         <section aria-label="Saved workflows">
+          <div className="list-toolbar">
+            <label className="btn btn-small" htmlFor="fp-import">
+              Import JSON
+              <svg width="12" height="12" viewBox="0 0 14 14" aria-hidden="true" focusable="false">
+                <path d="M4 5.5 7 8.5l3-3M7 3v7.5M2.5 11.5h9" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" fill="none" />
+              </svg>
+            </label>
+            <input
+              id="fp-import"
+              className="visually-hidden"
+              type="file"
+              accept=".json,application/json"
+              onChange={event => {
+                void handleImportFile(event.target.files?.[0]);
+                event.target.value = '';
+              }}
+            />
+            <span className="list-toolbar-hint">Schedule, credentials, and editing live inside each workflow</span>
+          </div>
+
           {workflows.length === 0 ? (
             <div className="empty">
               <span className="empty-icon"><WorkflowsEmptyIcon /></span>
@@ -598,6 +1068,7 @@ const App: React.FC = () => {
                         {workflow.steps.length} step{workflow.steps.length === 1 ? '' : 's'}
                         {' · '}
                         {relativeTime(workflow.createdAt)}
+                        {describeSchedule(workflow.schedule) ? ` · ${describeSchedule(workflow.schedule)}` : ''}
                       </span>
                     </div>
                     <div className="row-actions">
@@ -621,33 +1092,240 @@ const App: React.FC = () => {
 
                   {openWorkflowId === workflow.id ? (
                     <div className="detail">
+                      {workflow.description ? <p className="detail-desc">{workflow.description}</p> : null}
+                      {workflow.startUrl ? (
+                        <p className="detail-start" title={workflow.startUrl}>
+                          Starts at {hostLabel(workflow.startUrl)}
+                        </p>
+                      ) : null}
+
                       <p className="detail-title">Steps</p>
                       <ul className="steps">
-                        {workflow.steps.map((step, index) => (
-                          <li key={step.id} className={`step ${step.enabled ? '' : 'step-off'}`}>
-                            <span className="step-index">{index + 1}</span>
-                            <span className="step-chip">{step.type}</span>
-                            <span className="step-desc" title={describeStep(step)}>
-                              {step.input?.isSensitive && step.type !== 'select' ? (
-                                <span className="step-sensitive">sensitive</span>
-                              ) : null}
-                              {describeStep(step)}
-                            </span>
-                            <label className="switch">
-                              <input
-                                type="checkbox"
-                                checked={step.enabled}
-                                aria-label={`Include step ${index + 1} (${step.type}) when running`}
-                                onChange={() => void handleToggleStep(workflow.id, step.id)}
-                              />
-                              <span className="switch-track" aria-hidden="true" />
-                            </label>
-                          </li>
-                        ))}
+                        {workflow.steps.map((step, index) => {
+                          const key = `${workflow.id}:${step.id}`;
+                          const hasCredential = (credentialMap[workflow.id] ?? []).includes(step.id);
+                          const isSensitive = Boolean(step.input?.isSensitive);
+                          return (
+                            <li
+                              key={step.id}
+                              className={`step ${step.enabled ? '' : 'step-off'} ${openStepKey === key ? 'step-open' : ''}`}
+                            >
+                              <span className="step-index">{index + 1}</span>
+                              <span className="step-chip">{step.type}</span>
+                              <button
+                                type="button"
+                                className="step-desc step-desc-btn"
+                                aria-expanded={openStepKey === key}
+                                title={describeStep(step)}
+                                onClick={() => handleToggleStep(key, step)}
+                              >
+                                {isSensitive && step.type === 'type' ? (
+                                  <span className="step-sensitive">sensitive</span>
+                                ) : null}
+                                {isSensitive && step.type === 'type' && hasCredential ? (
+                                  <span className="cred-inline">credential</span>
+                                ) : null}
+                                {describeStep(step)}
+                              </button>
+                              <label className="switch">
+                                <input
+                                  type="checkbox"
+                                  checked={step.enabled}
+                                  aria-label={`Include step ${index + 1} (${step.type}) when running`}
+                                  onChange={() => void handleToggleStepEnabled(workflow.id, step.id)}
+                                />
+                                <span className="switch-track" aria-hidden="true" />
+                              </label>
+                            </li>
+                          );
+                        })}
                       </ul>
                       {workflow.steps.length === 0 ? (
                         <p className="detail-empty">This workflow has no recorded steps.</p>
                       ) : null}
+
+                      <ScheduleEditor
+                        value={workflow.schedule}
+                        timesRun={runCounts[workflow.id] ?? 0}
+                        busy={scheduleBusyId === workflow.id}
+                        onSave={schedule => void handleSaveSchedule(workflow.id, schedule)}
+                      />
+
+                      <div className="detail-actions">
+                        <button className="btn btn-small" onClick={() => void handleExportWorkflow(workflow)}>
+                          <ExportIcon />
+                          Export JSON
+                        </button>
+                      </div>
+                    </div>
+                  ) : null}
+
+                  {openWorkflowId === workflow.id ? (
+                    <div className="detail-continuation">
+                      <ul className="step-cards">
+                        {workflow.steps.map((step, index) => {
+                          const key = `${workflow.id}:${step.id}`;
+                          if (openStepKey !== key) return null;
+                          const hasCredential = (credentialMap[workflow.id] ?? []).includes(step.id);
+                          const credKey = key;
+                          const isSensitive = Boolean(step.input?.isSensitive);
+                          return (
+                            <li key={`card_${step.id}`} className="step-card">
+                              <div className="card-block">
+                                <p className="card-label">Action</p>
+                                <p className="card-text">{describeStep(step)}</p>
+                              </div>
+
+                              {step.type === 'type' || step.type === 'select' ? (
+                                isSensitive ? (
+                                  <div className="card-block">
+                                    <p className="card-label">Credential</p>
+                                    {secretTarget === credKey ? (
+                                      <div className="card-row">
+                                        <input
+                                          type="password"
+                                          className="input"
+                                          autoFocus
+                                          placeholder="Secret value"
+                                          aria-label="Credential value"
+                                          value={secretDraft}
+                                          onChange={event => setSecretDraft(event.target.value)}
+                                          onKeyDown={event => {
+                                            if (event.key === 'Enter') {
+                                              void handleSaveCredential(workflow.id, step.id);
+                                            }
+                                          }}
+                                        />
+                                        <button className="btn btn-mini" onClick={() => void handleSaveCredential(workflow.id, step.id)}>
+                                          Store
+                                        </button>
+                                        <button
+                                          className="btn btn-mini"
+                                          onClick={() => {
+                                            setSecretTarget(null);
+                                            setSecretDraft('');
+                                          }}
+                                        >
+                                          Cancel
+                                        </button>
+                                      </div>
+                                    ) : (
+                                      <div className="card-row">
+                                        <span className={`cred-status ${hasCredential ? 'cred-ok' : ''}`}>
+                                          {hasCredential ? 'Stored in vault' : 'Not configured'}
+                                        </span>
+                                        <button
+                                          className="btn btn-mini"
+                                          onClick={() => {
+                                            setSecretTarget(credKey);
+                                            setSecretDraft('');
+                                          }}
+                                        >
+                                          {hasCredential ? 'Update' : 'Set'}
+                                        </button>
+                                        {hasCredential ? (
+                                          <button
+                                            className="btn btn-mini"
+                                            onClick={() => void handleRemoveCredential(workflow.id, step.id)}
+                                          >
+                                            Remove
+                                          </button>
+                                        ) : null}
+                                      </div>
+                                    )}
+                                    <p className="card-note">Stored only on this device, never included in exports. Runs fail honestly until it is set.</p>
+                                  </div>
+                                ) : (
+                                  <div className="card-block">
+                                    <p className="card-label">Value</p>
+                                    <div className="card-row">
+                                      <input
+                                        className="input"
+                                        value={valueDraft}
+                                        aria-label="Step value"
+                                        onChange={event => setValueDraft(event.target.value)}
+                                      />
+                                      <button className="btn btn-mini" onClick={() => void handleApplyStepValue(workflow.id, step)}>
+                                        Apply
+                                      </button>
+                                    </div>
+                                  </div>
+                                )
+                              ) : null}
+
+                              {step.type === 'wait' ? (
+                                <div className="card-block">
+                                  <p className="card-label">Wait duration (seconds)</p>
+                                  <div className="card-row">
+                                    <input
+                                      className="input input-narrow"
+                                      type="number"
+                                      min={0.5}
+                                      step={0.5}
+                                      value={valueDraft}
+                                      aria-label="Wait duration in seconds"
+                                      onChange={event => setValueDraft(event.target.value)}
+                                    />
+                                    <button className="btn btn-mini" onClick={() => void handleApplyStepValue(workflow.id, step)}>
+                                      Apply
+                                    </button>
+                                  </div>
+                                </div>
+                              ) : null}
+
+                              <div className="card-block">
+                                <p className="card-label">Target resolution</p>
+                                <ul className="selector-list">
+                                  {(step.target?.selectors ?? []).map((selector, selectorIndex) => (
+                                    <li key={selectorIndex} className="selector">
+                                      <span className="selector-type">{selector.type}</span>
+                                      <span className="selector-value" title={selector.value}>{selector.value}</span>
+                                      <span className="selector-conf">{Math.round(selector.confidence * 100)}%</span>
+                                    </li>
+                                  ))}
+                                  {(step.target?.selectors ?? []).length === 0 ? (
+                                    <li className="detail-empty">No selectors recorded for this step</li>
+                                  ) : null}
+                                </ul>
+                                {step.target?.fingerprint ? (
+                                  <p className="card-fp">
+                                    Hint: {step.target.fingerprint.tag}
+                                    {step.target.fingerprint.ariaLabel ? ` · aria="${step.target.fingerprint.ariaLabel}"` : ''}
+                                    {step.target.fingerprint.text ? ` · text="${step.target.fingerprint.text.slice(0, 48)}"` : ''}
+                                    {step.target.fingerprint.name ? ` · name="${step.target.fingerprint.name}"` : ''}
+                                  </p>
+                                ) : null}
+                              </div>
+
+                              <div className="card-actions">
+                                <button
+                                  className="icon-btn"
+                                  aria-label="Move step up"
+                                  disabled={index === 0}
+                                  onClick={() => void handleMoveStep(workflow.id, index, -1)}
+                                >
+                                  <MoveUpIcon />
+                                </button>
+                                <button
+                                  className="icon-btn"
+                                  aria-label="Move step down"
+                                  disabled={index === workflow.steps.length - 1}
+                                  onClick={() => void handleMoveStep(workflow.id, index, 1)}
+                                >
+                                  <MoveDownIcon />
+                                </button>
+                                <span className="card-spacer" />
+                                <button
+                                  className="btn btn-mini"
+                                  onClick={() => void handleDeleteStep(workflow.id, step.id)}
+                                >
+                                  Delete step
+                                </button>
+                              </div>
+                            </li>
+                          );
+                        })}
+                      </ul>
                     </div>
                   ) : null}
                 </li>
@@ -723,7 +1401,7 @@ const App: React.FC = () => {
         </section>
       )}
 
-      <footer className="foot">Recordings stay on this device</footer>
+      <footer className="foot">Recordings, credentials, and schedules stay on this device</footer>
     </div>
   );
 };
