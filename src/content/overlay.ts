@@ -73,12 +73,10 @@ function setOverlay(build: (overlay: HTMLElement) => void): void {
   overlay.style.display = 'flex';
 }
 
-export function showRecordingBadge(stepCount: number): void {
+export function showRecordingBadge(stepCount?: number): void {
+  const count = typeof stepCount === 'number' ? ` · ${stepCount} step${stepCount === 1 ? '' : 's'}` : '';
   setOverlay((overlay) => {
-    overlay.append(
-      makeDot('#EF4444'),
-      makeLabel(`Recording · ${stepCount} step${stepCount === 1 ? '' : 's'}`)
-    );
+    overlay.append(makeDot('#EF4444'), makeLabel(`Recording${count}`));
   });
 }
 

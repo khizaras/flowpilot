@@ -1,23 +1,32 @@
 import { Recorder } from './recorder';
 import { Executor } from './executor';
+import { showExecutionBadge, showExecutionResult } from './overlay';
+import type { WorkflowStep } from '../shared/types';
 
 // Create recorder and executor instances
 const recorder = new Recorder();
+const executor = new Executor();
 
-// Execution progress is streamed to the side panel while a run is active
-const reportProgress = (current: number, total: number): void => {
-  void chrome.runtime.sendMessage({ type: 'RUN_PROGRESS', current, total }).catch(() => {
-    // No listener in the panel (e.g. it was closed mid-run)
-  });
-};
-const executor = new Executor(reportProgress);
-
-// Restore an in-progress recording after page loads/reloads/navigations
+// Adopt an in-progress recording after page loads/reloads/navigations
 void recorder.init();
 
-// Listen for messages from the extension
-chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-  const msg = (message ?? {}) as { type?: string; workflow?: unknown };
+// Listen for messages targeted at this tab (sent with chrome.tabs.sendMessage).
+// Broadcasts from extension pages (runtime.sendMessage) are ignored - the
+// service worker owns session state and run orchestration
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (!sender?.tab) {
+    return;
+  }
+
+  const msg = (message ?? {}) as {
+    type?: string;
+    step?: WorkflowStep;
+    timeoutMs?: number;
+    current?: number;
+    total?: number;
+    status?: string;
+    error?: string;
+  };
 
   switch (msg.type) {
     case 'START_RECORDING':
@@ -26,31 +35,33 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       break;
 
     case 'STOP_RECORDING':
-      void recorder.stopRecording().then((workflow) => {
-        sendResponse({ success: true, workflow });
-      });
+      void recorder.stopRecording()
+        .then(() => sendResponse({ success: true }))
+        .catch(() => sendResponse({ success: false }));
       return true; // Keep message channel open for async response
 
-    case 'EXECUTE_WORKFLOW':
-      if (msg.workflow) {
-        executor.executeWorkflow(msg.workflow)
-          .then(result => sendResponse({
-            success: result,
-            steps: executor.getStepResults(),
-            error: result ? undefined : (executor.getLastError() ?? 'Workflow execution failed')
-          }))
+    case 'EXECUTE_STEP':
+      if (msg.step) {
+        executor.executeSingleStep(msg.step, msg.timeoutMs)
+          .then(result => sendResponse({ success: result }))
           .catch((error: unknown) => sendResponse({ success: false, error: error instanceof Error ? error.message : String(error) }));
         return true; // Keep message channel open for async response
       }
-      sendResponse({ success: false, error: 'No workflow provided' });
+      sendResponse({ success: false, error: 'No step provided' });
       break;
 
-    case 'GET_RECORDING_STATE':
-      sendResponse({
-        success: true,
-        isRecording: recorder.getIsRecording(),
-        stepCount: recorder.getStepCount()
-      });
+    case 'EXECUTION_BADGE':
+      // Progress overlays render only in the top frame
+      if (window.self === window.top) {
+        if (typeof msg.current === 'number' && typeof msg.total === 'number') {
+          showExecutionBadge(msg.current, msg.total);
+        } else if (msg.status === 'success') {
+          showExecutionResult(true);
+        } else if (msg.status === 'failed') {
+          showExecutionResult(false, msg.error);
+        }
+      }
+      sendResponse({ success: true });
       break;
 
     default:

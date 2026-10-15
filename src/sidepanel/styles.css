@@ -209,6 +209,113 @@ body {
   animation: pulse 1.2s ease-in-out infinite;
 }
 
+.transport:not(.transport-rec) {
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--s2);
+}
+
+.transport-field {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.field-label {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+
+.url-input {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  background: var(--raised);
+  color: var(--text);
+  font-family: ui-monospace, 'Cascadia Mono', 'Consolas', monospace;
+  font-size: 11.5px;
+  transition: border-color 140ms var(--ease-out);
+}
+
+.url-input:hover {
+  border-color: oklch(100% 0 0 / 24%);
+}
+
+.url-input::placeholder {
+  color: var(--text-3);
+}
+
+.transport-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s3);
+}
+
+.transport-rec .rec-hint {
+  display: none;
+}
+
+/* ---------- Naming dialog ---------- */
+
+.naming {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+  padding: var(--s3);
+  border: 1px solid oklch(78% 0.15 166 / 35%);
+  border-radius: var(--r-l);
+  background:
+    linear-gradient(180deg, var(--accent-soft) 0%, var(--surface) 90%);
+}
+
+.naming-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--s2);
+}
+
+.naming-title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.naming-meta {
+  margin: 0;
+  font-size: 11px;
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.naming-input {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 12.5px;
+  font-weight: 500;
+}
+
+.naming-input:hover {
+  border-color: oklch(100% 0 0 / 24%);
+}
+
+.naming-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--s2);
+}
+
 @keyframes pulse {
   0%, 100% { opacity: 1; transform: scale(1); }
   50% { opacity: 0.45; transform: scale(0.82); }

@@ -6,78 +6,73 @@
 import { WorkflowStep, TargetDefinition, Selector, ElementFingerprint } from '../shared/types';
 import { showRecordingBadge, hideOverlay } from './overlay';
 
+// Shared with the service worker, which owns the recording session
 const RECORDING_STORAGE_KEY = 'flowpilot_recording';
 const INPUT_DEBOUNCE_MS = 500;
-
-interface StoredRecording {
-  active: boolean;
-  steps: WorkflowStep[];
-}
 
 function hasChromeStorage(): boolean {
   return typeof chrome !== 'undefined' && !!chrome.storage?.local;
 }
 
-async function readStoredRecording(): Promise<StoredRecording | null> {
-  if (!hasChromeStorage()) {
-    return null;
+function isTopFrame(): boolean {
+  try {
+    if (typeof window === 'undefined') {
+      return false;
+    }
+    return window.self === window.top;
+  } catch {
+    return false;
   }
-  const result = await chrome.storage.local.get(RECORDING_STORAGE_KEY);
-  const value = result[RECORDING_STORAGE_KEY] as Partial<StoredRecording> | undefined;
-  if (value?.active === true && Array.isArray(value.steps)) {
-    return { active: true, steps: value.steps };
-  }
-  return null;
-}
-
-function writeStoredRecording(recording: StoredRecording): void {
-  if (!hasChromeStorage()) {
-    return;
-  }
-  void chrome.storage.local.set({ [RECORDING_STORAGE_KEY]: recording });
 }
 
 export class Recorder {
   private isRecording = false;
-  private steps: WorkflowStep[] = [];
+  private lastStep: WorkflowStep | null = null;
   private pendingInputs: Map<HTMLElement, { value: string; timer: number }> = new Map();
 
   /**
-   * Restore an in-progress recording after the page was reloaded or navigated
+   * Adopt an active recording after the page was reloaded or navigated.
+   * The service worker owns the recorded steps; each frame only tracks
+   * whether recording is on
    */
   async init(): Promise<void> {
-    const stored = await readStoredRecording();
-    if (!stored || !stored.active) {
+    if (!hasChromeStorage()) {
+      return;
+    }
+    const result = await chrome.storage.local.get(RECORDING_STORAGE_KEY);
+    const value = result[RECORDING_STORAGE_KEY] as { active?: boolean } | undefined;
+    if (value?.active !== true) {
       return;
     }
     this.isRecording = true;
-    this.steps = stored.steps;
-    showRecordingBadge(this.steps.length);
+    if (isTopFrame()) {
+      showRecordingBadge();
+    }
   }
 
   /**
-   * Start recording user interactions
+   * Start recording user interactions in this frame
    */
   startRecording(): void {
     this.isRecording = true;
-    this.steps = [];
+    this.lastStep = null;
     this.flushPendingInputs();
-    writeStoredRecording({ active: true, steps: [] });
-    showRecordingBadge(0);
+    if (isTopFrame()) {
+      showRecordingBadge();
+    }
   }
 
   /**
-   * Stop recording and return the captured workflow
-   * @returns The recorded workflow steps
+   * Stop recording in this frame. Recorded steps live in the service
+   * worker's session, so this frame has nothing to hand back
    */
-  async stopRecording(): Promise<WorkflowStep[]> {
+  async stopRecording(): Promise<void> {
     this.isRecording = false;
     this.flushPendingInputs();
-    const steps = this.steps;
-    this.steps = [];
-    writeStoredRecording({ active: false, steps: [] });
-    hideOverlay();
-    return steps;
+    this.lastStep = null;
+    if (isTopFrame()) {
+      hideOverlay();
+    }
   }
 
   /**
@@ -86,14 +81,6 @@ export class Recorder {
    */
   getIsRecording(): boolean {
     return this.isRecording;
-  }
-
-  /**
-   * Get the number of recorded steps
-   * @returns Number of recorded steps
-   */
-  getStepCount(): number {
-    return this.steps.length;
   }
 
   /**
@@ -183,8 +170,8 @@ export class Recorder {
   private commitInput(target: HTMLInputElement, value: string): void {
     // Focusing a field for typing also records a click; the two belong to one
     // interaction, so the redundant standalone click is dropped
-    if (this.sameTarget(this.steps[this.steps.length - 1], target)) {
-      this.steps.pop();
+    if (this.sameTarget(this.lastStep, target)) {
+      this.lastStep = null;
     }
 
     const isSensitive = this.isSensitiveField(target);
@@ -208,7 +195,7 @@ export class Recorder {
   /**
    * Whether the last recorded step is a click on the same element
    */
-  private sameTarget(step: WorkflowStep | undefined, element: HTMLElement): boolean {
+  private sameTarget(step: WorkflowStep | null | undefined, element: HTMLElement): boolean {
     if (!step || step.type !== 'click' || !step.target) {
       return false;
     }
@@ -222,9 +209,15 @@ export class Recorder {
   }
 
   private commitStep(step: WorkflowStep): void {
-    this.steps.push(step);
-    writeStoredRecording({ active: true, steps: this.steps });
-    showRecordingBadge(this.steps.length);
+    // The service worker is the single writer for the recording session;
+    // the frame only remembers its own last step for the click-before-type check
+    this.lastStep = step;
+    if (typeof chrome !== 'undefined' && chrome.runtime?.sendMessage) {
+      void chrome.runtime.sendMessage({ type: 'RECORD_STEP', step }).catch(() => {});
+    }
+    if (isTopFrame()) {
+      showRecordingBadge();
+    }
   }
 
   private flushPendingInputs(): void {

@@ -187,6 +187,9 @@ const App: React.FC = () => {
   const [openWorkflowId, setOpenWorkflowId] = useState<string | null>(null);
   const [openRunId, setOpenRunId] = useState<string | null>(null);
   const [runDetails, setRunDetails] = useState<Record<string, ExecutionRun | undefined>>({});
+  const [startUrl, setStartUrl] = useState('');
+  const [namingWorkflow, setNamingWorkflow] = useState<Workflow | null>(null);
+  const [nameDraft, setNameDraft] = useState('');
 
   const loadWorkflows = useCallback(async () => {
     const response = await sendMessage<{ success: boolean; workflows: Workflow[] }>({
@@ -215,6 +218,20 @@ const App: React.FC = () => {
       .catch(() => undefined)
       .finally(() => setIsLoading(false));
   }, [loadWorkflows, loadExecutionRuns]);
+
+  // Prefill the start-page field with the URL of the active tab
+  useEffect(() => {
+    if (isLoading) return;
+    let cancelled = false;
+    void sendMessage<{ success: boolean; url: string }>({ type: 'GET_ACTIVE_TAB' }).then(response => {
+      if (!cancelled && response?.success) {
+        setStartUrl(response.url ?? '');
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [isLoading]);
 
   // Poll the recording state so the panel stays accurate while users browse
   useEffect(() => {
@@ -269,7 +286,10 @@ const App: React.FC = () => {
 
   const handleStartRecording = useCallback(async () => {
     setError(null);
-    const response = await sendMessage<{ success: boolean; error?: string }>({ type: 'START_RECORDING' });
+    const response = await sendMessage<{ success: boolean; error?: string; message?: string }>({
+      type: 'START_RECORDING',
+      url: startUrl
+    });
     if (response?.success) {
       setIsRecording(true);
       setStepCount(0);
@@ -277,20 +297,47 @@ const App: React.FC = () => {
       setIsRecording(false);
       setError(response?.error ?? 'Failed to start recording');
     }
-  }, []);
+  }, [startUrl]);
 
   const handleStopRecording = useCallback(async () => {
     setError(null);
-    const response = await sendMessage<{ success: boolean; error?: string }>({ type: 'STOP_RECORDING' });
+    const response = await sendMessage<{ success: boolean; error?: string; workflow?: Workflow }>({
+      type: 'STOP_RECORDING'
+    });
     if (response?.success) {
       setIsRecording(false);
       await loadWorkflows();
       setActiveTab('workflows');
+      if (response.workflow) {
+        setNamingWorkflow(response.workflow);
+        setNameDraft(response.workflow.name);
+      }
     } else {
       setError(response?.error ?? 'Failed to stop recording');
       setIsRecording(false);
     }
   }, [loadWorkflows]);
+
+  const handleSaveWorkflowName = useCallback(async () => {
+    if (!namingWorkflow) return;
+    setError(null);
+    const name = nameDraft.trim();
+    if (!name) {
+      setError('Give the workflow a name');
+      return;
+    }
+    const response = await sendMessage<{ success: boolean; error?: string }>({
+      type: 'SAVE_WORKFLOW',
+      workflow: { ...namingWorkflow, name }
+    });
+    if (response?.success) {
+      setNamingWorkflow(null);
+      await loadWorkflows();
+      setActiveTab('workflows');
+    } else {
+      setError(response?.error ?? 'Failed to save the workflow');
+    }
+  }, [namingWorkflow, nameDraft, loadWorkflows]);
 
   const handleExecuteWorkflow = useCallback(async (workflowId: string) => {
     setError(null);
@@ -419,17 +466,62 @@ const App: React.FC = () => {
           </>
         ) : (
           <>
-            <div className="rec-copy">
-              <span className="rec-title">Ready to capture</span>
-              <span className="rec-hint">Interactions on the active tab become reusable steps</span>
+            <div className="transport-field">
+              <label className="field-label" htmlFor="fp-start-url">Start page</label>
+              <input
+                id="fp-start-url"
+                className="url-input"
+                type="url"
+                inputMode="url"
+                autoComplete="off"
+                spellCheck={false}
+                placeholder="https://example.com"
+                value={startUrl}
+                onChange={event => setStartUrl(event.target.value)}
+              />
             </div>
-            <button className="btn btn-primary" onClick={() => void handleStartRecording()}>
-              <RecordIcon />
-              Record
-            </button>
+            <div className="transport-row">
+              <span className="rec-hint">Interactions on this tab become reusable steps</span>
+              <button className="btn btn-primary" onClick={() => void handleStartRecording()}>
+                <RecordIcon />
+                Record
+              </button>
+            </div>
           </>
         )}
       </section>
+
+      {namingWorkflow ? (
+        <section className="naming" aria-label="Name the recorded workflow">
+          <div className="naming-head">
+            <p className="naming-title">Name this workflow</p>
+            <p className="naming-meta">
+              {namingWorkflow.steps.length} step{namingWorkflow.steps.length === 1 ? '' : 's'} captured
+            </p>
+          </div>
+          <input
+            className="naming-input"
+            value={nameDraft}
+            placeholder="Workflow name"
+            aria-label="Workflow name"
+            autoFocus
+            onChange={event => setNameDraft(event.target.value)}
+            onKeyDown={event => {
+              if (event.key === 'Enter') {
+                void handleSaveWorkflowName();
+              }
+            }}
+          />
+          <div className="naming-actions">
+            <button className="btn btn-small" onClick={() => setNamingWorkflow(null)}>
+              Keep default
+            </button>
+            <button className="btn btn-primary" onClick={() => void handleSaveWorkflowName()}>
+              Save workflow
+            </button>
+          </div>
+        </section>
+      ) : null}
 
       {runningWorkflowId ? (
         <div className="run-progress" role="status">
