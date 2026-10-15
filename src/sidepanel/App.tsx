@@ -236,6 +236,86 @@ function HistoryEmptyIcon() {
 }
 
 /**
+ * Run settings editor: base URL, pause between steps, element wait window
+ */
+function RunSettingsEditor(props: {
+  workflow: Workflow;
+  onSave: (settings: { startUrl?: string; stepDelayMs?: number; elementTimeoutMs?: number }) => void;
+  busy: boolean;
+}) {
+  const { workflow, onSave, busy } = props;
+  const [urlDraft, setUrlDraft] = useState(workflow.startUrl ?? '');
+  const [pauseDraft, setPauseDraft] = useState(String(workflow.stepDelayMs ?? 150));
+  const [timeoutDraft, setTimeoutDraft] = useState(String(workflow.elementTimeoutMs ?? 6000));
+
+  const apply = () => {
+    const url = urlDraft.trim();
+    const pause = Number(pauseDraft);
+    const timeout = Number(timeoutDraft);
+    onSave({
+      startUrl: url.length > 0 ? url : undefined,
+      stepDelayMs: Number.isFinite(pause) && pause >= 0 ? Math.round(pause) : undefined,
+      elementTimeoutMs: Number.isFinite(timeout) && timeout >= 500 ? Math.round(timeout) : undefined
+    });
+  };
+
+  return (
+    <div className="sched">
+      <p className="detail-title">Run settings</p>
+      <div className="sched-fields">
+        <div className="sched-row">
+          <label className="field-label" htmlFor={`fp-run-url-${workflow.id}`}>Start page</label>
+          <input
+            id={`fp-run-url-${workflow.id}`}
+            className="input"
+            type="url"
+            inputMode="url"
+            autoComplete="off"
+            spellCheck={false}
+            placeholder="https://example.com"
+            value={urlDraft}
+            onChange={event => setUrlDraft(event.target.value)}
+          />
+        </div>
+        <p className="card-note">Every run visits this URL first and waits for it to load. The active tab is reused when it already shows this page.</p>
+
+        <div className="sched-row">
+          <label className="field-label" htmlFor={`fp-pause-${workflow.id}`}>Pause between steps (ms)</label>
+          <input
+            id={`fp-pause-${workflow.id}`}
+            className="input input-narrow"
+            type="number"
+            min={0}
+            step={50}
+            value={pauseDraft}
+            onChange={event => setPauseDraft(event.target.value)}
+          />
+        </div>
+
+        <div className="sched-row">
+          <label className="field-label" htmlFor={`fp-timeout-${workflow.id}`}>Wait for element (ms)</label>
+          <input
+            id={`fp-timeout-${workflow.id}`}
+            className="input input-narrow"
+            type="number"
+            min={500}
+            step={250}
+            value={timeoutDraft}
+            onChange={event => setTimeoutDraft(event.target.value)}
+          />
+        </div>
+        <p className="card-note">Each step proactively waits until its target element is present in the DOM, polling across all frames, before acting. Raise the window for slow pages.</p>
+      </div>
+      <div className="naming-actions">
+        <button className="btn btn-primary btn-small" disabled={busy} onClick={apply}>
+          Save run settings
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/**
  * Schedule editor shown inside a workflow's detail view
  */
 function ScheduleEditor(props: {
@@ -845,6 +925,20 @@ const App: React.FC = () => {
     }
   }, [loadWorkflows]);
 
+  const handleSaveRunSettings = useCallback(async (
+    workflow: Workflow,
+    settings: { startUrl?: string; stepDelayMs?: number; elementTimeoutMs?: number }
+  ) => {
+    setError(null);
+    await persistWorkflow({
+      ...workflow,
+      startUrl: settings.startUrl,
+      stepDelayMs: settings.stepDelayMs,
+      elementTimeoutMs: settings.elementTimeoutMs,
+      updatedAt: Date.now()
+    });
+  }, [persistWorkflow]);
+
   if (isLoading) {
     return (
       <div className="panel" aria-busy="true">
@@ -1143,6 +1237,12 @@ const App: React.FC = () => {
                       {workflow.steps.length === 0 ? (
                         <p className="detail-empty">This workflow has no recorded steps.</p>
                       ) : null}
+
+                      <RunSettingsEditor
+                        workflow={workflow}
+                        busy={false}
+                        onSave={settings => void handleSaveRunSettings(workflow, settings)}
+                      />
 
                       <ScheduleEditor
                         value={workflow.schedule}

@@ -86,6 +86,10 @@ export interface Workflow {
   updatedAt: number;
   startUrl?: string;
   schedule?: WorkflowSchedule;
+  /** Pause between steps in milliseconds (default 150) */
+  stepDelayMs?: number;
+  /** How long each step may wait for its target element to appear (default 6000) */
+  elementTimeoutMs?: number;
   // Add other properties as needed
 }
 

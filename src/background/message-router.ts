@@ -58,7 +58,8 @@ async function readRecordingState(): Promise<RecordingState> {
   const value = result[RECORDING_KEY] as Partial<RecordingState> | undefined;
   return {
     active: value?.active === true,
-    steps: Array.isArray(value?.steps) ? value.steps : []
+    steps: Array.isArray(value?.steps) ? value.steps : [],
+    startUrl: typeof value?.startUrl === 'string' ? value.startUrl : undefined
   };
 }
 
@@ -407,7 +408,7 @@ export class MessageRouter {
    * attempt, then every frame keeps polling until the deadline so
    * late-rendered content is still found
    */
-  private async executeStepAcrossFrames(tabId: number, step: WorkflowStep): Promise<void> {
+  private async executeStepAcrossFrames(tabId: number, step: WorkflowStep, resolveTimeoutMs: number): Promise<void> {
     if (step.type === 'wait') {
       await pause(step.wait?.timeout ?? 1000);
       return;
@@ -429,8 +430,9 @@ export class MessageRouter {
       }
     }
 
-    // Pass 2: keep trying across frames until the deadline
-    const deadline = Date.now() + STEP_RESOLVE_TIMEOUT_MS;
+    // Pass 2: keep polling every frame until the deadline so each step waits
+    // for its DOM element to become present
+    const deadline = Date.now() + resolveTimeoutMs;
     while (Date.now() < deadline) {
       for (const frameId of frames) {
         const response = await this.sendStepToFrame(tabId, frameId, step, 400);
@@ -565,6 +567,16 @@ export class MessageRouter {
     const runDeadline = run.startTime + EXECUTION_TIMEOUT_MS;
     const vault = await readVault();
     const secrets = vault[workflow.id] ?? {};
+    // Per-workflow timing: pause between steps and how long each step waits
+    // for its element to become present (proactive target wait)
+    const pauseMs =
+      typeof workflow.stepDelayMs === 'number' && workflow.stepDelayMs >= 0
+        ? workflow.stepDelayMs
+        : STEP_PAUSE_MS;
+    const elementTimeoutMs =
+      typeof workflow.elementTimeoutMs === 'number' && workflow.elementTimeoutMs >= 500
+        ? workflow.elementTimeoutMs
+        : STEP_RESOLVE_TIMEOUT_MS;
 
     let failure: string | undefined;
     const steps: WorkflowStep[] = (workflow.steps as WorkflowStep[]).filter(step => step?.enabled !== false);
@@ -590,7 +602,7 @@ export class MessageRouter {
           }
           stepToSend = { ...step, input: { ...step.input, value: secret } };
         }
-        await this.executeStepAcrossFrames(tabId, stepToSend);
+        await this.executeStepAcrossFrames(tabId, stepToSend, elementTimeoutMs);
         results.push({ stepId: step.id, stepType: step.type, status: 'success', timestamp: stepStart });
       } catch (error) {
         const reason = describeError(error);
@@ -598,7 +610,7 @@ export class MessageRouter {
         failure = `Step ${i + 1} of ${steps.length} (${step.type}) failed: ${reason}`;
         break;
       }
-      await pause(STEP_PAUSE_MS);
+      await pause(pauseMs);
     }
 
     run.steps = convertStepResults(run, results);
