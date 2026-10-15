@@ -509,6 +509,7 @@ const App: React.FC = () => {
   const [secretDraft, setSecretDraft] = useState('');
   const [runCounts, setRunCounts] = useState<Record<string, number>>({});
   const [scheduleBusyId, setScheduleBusyId] = useState<string | null>(null);
+  const [failedRun, setFailedRun] = useState<ExecutionRun | null>(null);
 
   const loadWorkflows = useCallback(async () => {
     const response = await sendMessage<{ success: boolean; workflows: Workflow[] }>({
@@ -722,6 +723,7 @@ const App: React.FC = () => {
 
   const handleExecuteWorkflow = useCallback(async (workflowId: string) => {
     setError(null);
+    setFailedRun(null);
     setRunningWorkflowId(workflowId);
     setRunProgress({ current: 0, total: 0 });
     try {
@@ -735,6 +737,16 @@ const App: React.FC = () => {
       } else {
         setError(response?.error ?? 'Failed to execute workflow');
         setRunProgress(null);
+        // Surface the full run summary with per-step outcomes
+        if (response?.runId) {
+          const runResponse = await sendMessage<{ success: boolean; run: ExecutionRun | null }>({
+            type: 'GET_RUN',
+            id: response.runId
+          });
+          if (runResponse?.success && runResponse.run) {
+            setFailedRun(runResponse.run);
+          }
+        }
       }
     } finally {
       setRunningWorkflowId(null);
@@ -780,6 +792,14 @@ const App: React.FC = () => {
   const handleToggleStepEnabled = useCallback(async (workflowId: string, stepId: string) => {
     await updateSteps(workflowId, steps =>
       steps.map(step => (step.id === stepId ? { ...step, enabled: !step.enabled } : step))
+    );
+  }, [updateSteps]);
+
+  const handleToggleIgnoreMissing = useCallback(async (workflowId: string, stepId: string) => {
+    await updateSteps(workflowId, steps =>
+      steps.map(step =>
+        step.id === stepId ? { ...step, ignoreIfMissing: step.ignoreIfMissing !== true } : step
+      )
     );
   }, [updateSteps]);
 
@@ -1092,6 +1112,77 @@ const App: React.FC = () => {
         </div>
       ) : null}
 
+      {failedRun ? (
+        <section className="run-report" role="alert" aria-label="Run summary report">
+          <div className="run-report-head">
+            <div>
+              <p className="naming-title">Run summary</p>
+              <p className="naming-meta">
+                {workflows.find(w => w.id === failedRun.workflowId)?.name ?? 'Workflow'} · {relativeTime(failedRun.startTime)}
+              </p>
+            </div>
+            <button className="alert-close" aria-label="Dismiss run summary" onClick={() => setFailedRun(null)}>
+              <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true" focusable="false">
+                <path d="m1.5 1.5 7 7m0-7-7 7" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+              </svg>
+            </button>
+          </div>
+
+          <div className="report-stats">
+            <span className="stat">
+              <span className="stat-value stat-good">
+                {failedRun.steps.filter(s => s.status === 'success').length}
+              </span>
+              <span className="stat-label">succeeded</span>
+            </span>
+            <span className="stat">
+              <span className="stat-value stat-skip">
+                {failedRun.steps.filter(s => s.status === 'skipped').length}
+              </span>
+              <span className="stat-label">skipped</span>
+            </span>
+            <span className="stat">
+              <span className="stat-value stat-bad">
+                {failedRun.steps.filter(s => s.status === 'failed').length}
+              </span>
+              <span className="stat-label">failed</span>
+            </span>
+          </div>
+
+          <ul className="steps">
+            {failedRun.steps.map((step, index) => (
+              <li
+                key={step.id}
+                className={`step ${step.status === 'failed' ? 'step-broken' : ''} ${step.status === 'skipped' ? 'step-off' : ''}`}
+              >
+                <span className="step-index">{index + 1}</span>
+                <span
+                  className={`step-chip ${
+                    step.status === 'failed' ? 'chip-failed' : step.status === 'skipped' ? 'chip-skipped' : 'chip-good'
+                  }`}
+                >
+                  {step.status}
+                </span>
+                <span className="step-desc">
+                  {step.stepType ? `${step.stepType} · ` : ''}
+                  {step.status === 'failed'
+                    ? (step.error ?? 'failed')
+                    : step.status === 'skipped'
+                      ? `skipped after wait window · ${step.error ?? 'target not present'}`
+                      : 'completed'}
+                </span>
+              </li>
+            ))}
+          </ul>
+          {failedRun.steps.length === 0 ? (
+            <p className="detail-empty">No step diagnostics were captured for this run.</p>
+          ) : null}
+          <p className="card-note">
+            Optional steps marked "skip if missing" continue the run; failed steps stop it. Adjust either in the workflow's step editor.
+          </p>
+        </section>
+      ) : null}
+
       <nav className="tabs" role="tablist" aria-label="Panel sections">
         <button
           className={`tab ${activeTab === 'workflows' ? 'tab-active' : ''}`}
@@ -1372,6 +1463,26 @@ const App: React.FC = () => {
                                   </div>
                                 </div>
                               ) : null}
+
+                              <div className="card-block">
+                                <p className="card-label">If the target is missing</p>
+                                <div className="card-row">
+                                  <label className="switch">
+                                    <input
+                                      type="checkbox"
+                                      checked={step.ignoreIfMissing === true}
+                                      aria-label="Skip this step when the target element is not found"
+                                      onChange={() => void handleToggleIgnoreMissing(workflow.id, step.id)}
+                                    />
+                                    <span className="switch-track" aria-hidden="true" />
+                                  </label>
+                                  <span className="cred-status">
+                                    {step.ignoreIfMissing === true
+                                      ? 'Skip after the wait window and continue'
+                                      : 'Fail the whole run'}
+                                  </span>
+                                </div>
+                              </div>
 
                               <div className="card-block">
                                 <p className="card-label">Target resolution</p>

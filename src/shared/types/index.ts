@@ -58,6 +58,8 @@ export interface WorkflowStep {
   input?: InputData;
   wait?: WaitCondition;
   timestamp: number;
+  /** When the target never appears, skip this step instead of failing the run */
+  ignoreIfMissing?: boolean;
   // Add other properties as needed
 }
 
@@ -98,7 +100,7 @@ export interface ExecutionStep {
   workflowId: string;
   stepId: string;
   stepType?: StepType;
-  status: 'pending' | 'running' | 'success' | 'failed';
+  status: 'pending' | 'running' | 'success' | 'failed' | 'skipped';
   timestamp: number;
   error?: string;
   // Add other properties as needed
@@ -120,7 +122,7 @@ export interface ExecutionRun {
 export interface StepResult {
   stepId: string;
   stepType: StepType;
-  status: 'success' | 'failed';
+  status: 'success' | 'failed' | 'skipped';
   timestamp: number;
   error?: string;
 }

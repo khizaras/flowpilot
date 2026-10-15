@@ -1315,6 +1315,66 @@ body {
   color: var(--accent-contrast);
 }
 
+/* ---------- Run summary report ---------- */
+
+.run-report {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s3);
+  padding: var(--s3);
+  border: 1px solid oklch(66% 0.19 25 / 40%);
+  border-radius: var(--r-l);
+  background: linear-gradient(180deg, var(--error-soft) 0%, var(--surface) 70%);
+}
+
+.run-report-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--s2);
+}
+
+.run-report-head p {
+  margin: 0;
+}
+
+.report-stats {
+  display: flex;
+  gap: var(--s2);
+}
+
+.stat {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  padding: var(--s2) var(--s3);
+  border: 1px solid var(--line);
+  border-radius: var(--r-m);
+  background: var(--surface);
+}
+
+.stat-value {
+  font-size: 16px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.stat-good { color: var(--good); }
+.stat-skip { color: var(--warn); }
+.stat-bad { color: var(--error); }
+
+.stat-label {
+  font-size: 10.5px;
+  color: var(--text-3);
+}
+
+.chip-skipped {
+  background: var(--rec-soft);
+  border-color: transparent;
+  color: var(--warn);
+}
+
 /* ---------- Accessibility ---------- */
 
 @media (prefers-reduced-motion: reduce) {

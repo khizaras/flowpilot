@@ -150,6 +150,9 @@ function normalizeImportedStep(step: unknown, position: number): WorkflowStep {
     enabled: raw.enabled !== false,
     timestamp: typeof raw.timestamp === 'number' ? raw.timestamp : Date.now()
   };
+  if (raw.ignoreIfMissing === true) {
+    normalized.ignoreIfMissing = true;
+  }
   if (raw.target && typeof raw.target === 'object') {
     normalized.target = raw.target as WorkflowStep['target'];
   }
@@ -606,9 +609,14 @@ export class MessageRouter {
         results.push({ stepId: step.id, stepType: step.type, status: 'success', timestamp: stepStart });
       } catch (error) {
         const reason = describeError(error);
-        results.push({ stepId: step.id, stepType: step.type, status: 'failed', timestamp: stepStart, error: reason });
-        failure = `Step ${i + 1} of ${steps.length} (${step.type}) failed: ${reason}`;
-        break;
+        if (step.ignoreIfMissing === true) {
+          // The step was marked "skip if missing": log it and keep the run alive
+          results.push({ stepId: step.id, stepType: step.type, status: 'skipped', timestamp: stepStart, error: reason });
+        } else {
+          results.push({ stepId: step.id, stepType: step.type, status: 'failed', timestamp: stepStart, error: reason });
+          failure = `Step ${i + 1} of ${steps.length} (${step.type}) failed: ${reason}`;
+          break;
+        }
       }
       await pause(pauseMs);
     }
